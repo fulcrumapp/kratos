@@ -2,7 +2,7 @@
   "components": {
     "responses": {
       "emptyResponse": {
-        "description": "Empty responses are sent when, for example, resources are deleted. The HTTP status code for empty responses is typically 201."
+        "description": "Empty responses are sent when, for example, resources are deleted. The HTTP status code for empty responses is typically 204."
       },
       "identitySchemas": {
         "content": {
@@ -81,6 +81,9 @@
       }
     },
     "schemas": {
+      "CodeChannel": {
+        "type": "string"
+      },
       "DefaultError": {},
       "Duration": {
         "description": "A Duration represents the elapsed time between two instants\nas an int64 nanosecond count. The representation limits the\nlargest representable duration to approximately 290 years.",
@@ -465,6 +468,7 @@
       "continueWith": {
         "discriminator": {
           "mapping": {
+            "redirect_browser_to": "#/components/schemas/continueWithRedirectBrowserTo",
             "set_ory_session_token": "#/components/schemas/continueWithSetOrySessionToken",
             "show_recovery_ui": "#/components/schemas/continueWithRecoveryUi",
             "show_settings_ui": "#/components/schemas/continueWithSettingsUi",
@@ -484,6 +488,9 @@
           },
           {
             "$ref": "#/components/schemas/continueWithRecoveryUi"
+          },
+          {
+            "$ref": "#/components/schemas/continueWithRedirectBrowserTo"
           }
         ]
       },
@@ -516,12 +523,34 @@
             "type": "string"
           },
           "url": {
-            "description": "The URL of the recovery flow",
+            "description": "The URL of the recovery flow\n\nIf this value is set, redirect the user's browser to this URL. This value is typically unset for native clients / API flows.",
             "type": "string"
           }
         },
         "required": [
           "id"
+        ],
+        "type": "object"
+      },
+      "continueWithRedirectBrowserTo": {
+        "description": "Indicates, that the UI flow could be continued by showing a recovery ui",
+        "properties": {
+          "action": {
+            "description": "Action will always be `redirect_browser_to`\nredirect_browser_to ContinueWithActionRedirectBrowserToString",
+            "enum": [
+              "redirect_browser_to"
+            ],
+            "type": "string",
+            "x-go-enum-desc": "redirect_browser_to ContinueWithActionRedirectBrowserToString"
+          },
+          "redirect_browser_to": {
+            "description": "The URL to redirect the browser to",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action",
+          "redirect_browser_to"
         ],
         "type": "object"
       },
@@ -574,6 +603,10 @@
             "description": "The ID of the settings flow",
             "format": "uuid",
             "type": "string"
+          },
+          "url": {
+            "description": "The URL of the settings flow\n\nIf this value is set, redirect the user's browser to this URL. This value is typically unset for native clients / API flows.",
+            "type": "string"
           }
         },
         "required": [
@@ -610,7 +643,7 @@
             "type": "string"
           },
           "url": {
-            "description": "The URL of the verification flow",
+            "description": "The URL of the verification flow\n\nIf this value is set, redirect the user's browser to this URL. This value is typically unset for native clients / API flows.",
             "type": "string"
           },
           "verifiable_address": {
@@ -997,7 +1030,7 @@
             "type": "array"
           },
           "type": {
-            "description": "Type discriminates between different types of credentials.\npassword CredentialsTypePassword\noidc CredentialsTypeOIDC\ntotp CredentialsTypeTOTP\nlookup_secret CredentialsTypeLookup\nwebauthn CredentialsTypeWebAuthn\ncode CredentialsTypeCodeAuth\npasskey CredentialsTypePasskey\nprofile CredentialsTypeProfile\nlink_recovery CredentialsTypeRecoveryLink  CredentialsTypeRecoveryLink is a special credential type linked to the link strategy (recovery flow).  It is not used within the credentials object itself.\ncode_recovery CredentialsTypeRecoveryCode",
+            "description": "Type discriminates between different types of credentials.\npassword CredentialsTypePassword\noidc CredentialsTypeOIDC\ntotp CredentialsTypeTOTP\nlookup_secret CredentialsTypeLookup\nwebauthn CredentialsTypeWebAuthn\ncode CredentialsTypeCodeAuth\npasskey CredentialsTypePasskey\nprofile CredentialsTypeProfile\nsaml CredentialsTypeSAML\nlink_recovery CredentialsTypeRecoveryLink  CredentialsTypeRecoveryLink is a special credential type linked to the link strategy (recovery flow).  It is not used within the credentials object itself.\ncode_recovery CredentialsTypeRecoveryCode",
             "enum": [
               "password",
               "oidc",
@@ -1007,11 +1040,12 @@
               "code",
               "passkey",
               "profile",
+              "saml",
               "link_recovery",
               "code_recovery"
             ],
             "type": "string",
-            "x-go-enum-desc": "password CredentialsTypePassword\noidc CredentialsTypeOIDC\ntotp CredentialsTypeTOTP\nlookup_secret CredentialsTypeLookup\nwebauthn CredentialsTypeWebAuthn\ncode CredentialsTypeCodeAuth\npasskey CredentialsTypePasskey\nprofile CredentialsTypeProfile\nlink_recovery CredentialsTypeRecoveryLink  CredentialsTypeRecoveryLink is a special credential type linked to the link strategy (recovery flow).  It is not used within the credentials object itself.\ncode_recovery CredentialsTypeRecoveryCode"
+            "x-go-enum-desc": "password CredentialsTypePassword\noidc CredentialsTypeOIDC\ntotp CredentialsTypeTOTP\nlookup_secret CredentialsTypeLookup\nwebauthn CredentialsTypeWebAuthn\ncode CredentialsTypeCodeAuth\npasskey CredentialsTypePasskey\nprofile CredentialsTypeProfile\nsaml CredentialsTypeSAML\nlink_recovery CredentialsTypeRecoveryLink  CredentialsTypeRecoveryLink is a special credential type linked to the link strategy (recovery flow).  It is not used within the credentials object itself.\ncode_recovery CredentialsTypeRecoveryCode"
           },
           "updated_at": {
             "description": "UpdatedAt is a helper struct field for gobuffalo.pop.",
@@ -1029,12 +1063,23 @@
       "identityCredentialsCode": {
         "description": "CredentialsCode represents a one time login/registration code",
         "properties": {
-          "address_type": {
-            "description": "The type of the address for this code",
+          "addresses": {
+            "items": {
+              "$ref": "#/components/schemas/identityCredentialsCodeAddress"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "identityCredentialsCodeAddress": {
+        "properties": {
+          "address": {
+            "description": "The address for this code",
             "type": "string"
           },
-          "used_at": {
-            "$ref": "#/components/schemas/NullTime"
+          "channel": {
+            "$ref": "#/components/schemas/CodeChannel"
           }
         },
         "type": "object"
@@ -1080,6 +1125,10 @@
           "hashed_password": {
             "description": "HashedPassword is a hash-representation of the password.",
             "type": "string"
+          },
+          "use_password_migration_hook": {
+            "description": "UsePasswordMigrationHook is set to true if the password should be migrated\nusing the password migration hook. If set, and the HashedPassword is empty, a\nwebhook will be called during login to migrate the password.",
+            "type": "boolean"
           }
         },
         "title": "CredentialsPassword is contains the configuration for credentials of the type password.",
@@ -1103,12 +1152,16 @@
         "description": "Response for a single identity patch",
         "properties": {
           "action": {
-            "description": "The action for this specific patch\ncreate ActionCreate  Create this identity.",
+            "description": "The action for this specific patch\ncreate ActionCreate  Create this identity.\nerror ActionError  Error indicates that the patch failed.",
             "enum": [
-              "create"
+              "create",
+              "error"
             ],
             "type": "string",
-            "x-go-enum-desc": "create ActionCreate  Create this identity."
+            "x-go-enum-desc": "create ActionCreate  Create this identity.\nerror ActionError  Error indicates that the patch failed."
+          },
+          "error": {
+            "$ref": "#/components/schemas/DefaultError"
           },
           "identity": {
             "description": "The identity ID payload of this patch",
@@ -1228,6 +1281,10 @@
           "password": {
             "description": "The password in plain text if no hash is available.",
             "type": "string"
+          },
+          "use_password_migration_hook": {
+            "description": "If set to true, the password will be migrated using the password migration hook.",
+            "type": "boolean"
           }
         },
         "type": "object"
@@ -1272,7 +1329,7 @@
         "description": "This object represents a login flow. A login flow is initiated at the \"Initiate Login API / Browser Flow\"\nendpoint by a client.\n\nOnce a login flow is completed successfully, a session cookie or session token will be issued.",
         "properties": {
           "active": {
-            "description": "The active login method\n\nIf set contains the login method used. If the flow is new, it is unset.\npassword CredentialsTypePassword\noidc CredentialsTypeOIDC\ntotp CredentialsTypeTOTP\nlookup_secret CredentialsTypeLookup\nwebauthn CredentialsTypeWebAuthn\ncode CredentialsTypeCodeAuth\npasskey CredentialsTypePasskey\nprofile CredentialsTypeProfile\nlink_recovery CredentialsTypeRecoveryLink  CredentialsTypeRecoveryLink is a special credential type linked to the link strategy (recovery flow).  It is not used within the credentials object itself.\ncode_recovery CredentialsTypeRecoveryCode",
+            "description": "The active login method\n\nIf set contains the login method used. If the flow is new, it is unset.\npassword CredentialsTypePassword\noidc CredentialsTypeOIDC\ntotp CredentialsTypeTOTP\nlookup_secret CredentialsTypeLookup\nwebauthn CredentialsTypeWebAuthn\ncode CredentialsTypeCodeAuth\npasskey CredentialsTypePasskey\nprofile CredentialsTypeProfile\nsaml CredentialsTypeSAML\nlink_recovery CredentialsTypeRecoveryLink  CredentialsTypeRecoveryLink is a special credential type linked to the link strategy (recovery flow).  It is not used within the credentials object itself.\ncode_recovery CredentialsTypeRecoveryCode",
             "enum": [
               "password",
               "oidc",
@@ -1282,11 +1339,12 @@
               "code",
               "passkey",
               "profile",
+              "saml",
               "link_recovery",
               "code_recovery"
             ],
             "type": "string",
-            "x-go-enum-desc": "password CredentialsTypePassword\noidc CredentialsTypeOIDC\ntotp CredentialsTypeTOTP\nlookup_secret CredentialsTypeLookup\nwebauthn CredentialsTypeWebAuthn\ncode CredentialsTypeCodeAuth\npasskey CredentialsTypePasskey\nprofile CredentialsTypeProfile\nlink_recovery CredentialsTypeRecoveryLink  CredentialsTypeRecoveryLink is a special credential type linked to the link strategy (recovery flow).  It is not used within the credentials object itself.\ncode_recovery CredentialsTypeRecoveryCode"
+            "x-go-enum-desc": "password CredentialsTypePassword\noidc CredentialsTypeOIDC\ntotp CredentialsTypeTOTP\nlookup_secret CredentialsTypeLookup\nwebauthn CredentialsTypeWebAuthn\ncode CredentialsTypeCodeAuth\npasskey CredentialsTypePasskey\nprofile CredentialsTypeProfile\nsaml CredentialsTypeSAML\nlink_recovery CredentialsTypeRecoveryLink  CredentialsTypeRecoveryLink is a special credential type linked to the link strategy (recovery flow).  It is not used within the credentials object itself.\ncode_recovery CredentialsTypeRecoveryCode"
           },
           "created_at": {
             "description": "CreatedAt is a helper struct field for gobuffalo.pop.",
@@ -1369,13 +1427,14 @@
         "type": "object"
       },
       "loginFlowState": {
-        "description": "The state represents the state of the login flow.\n\nchoose_method: ask the user to choose a method (e.g. login account via email)\nsent_email: the email has been sent to the user\npassed_challenge: the request was successful and the login challenge was passed.",
+        "description": "The experimental state represents the state of a login flow. This field is EXPERIMENTAL and subject to change!",
         "enum": [
           "choose_method",
           "sent_email",
           "passed_challenge"
         ],
-        "title": "Login Flow State"
+        "title": "Login flow state (experimental)",
+        "type": "string"
       },
       "logoutFlow": {
         "description": "Logout Flow",
@@ -1666,13 +1725,13 @@
         "type": "object"
       },
       "recoveryFlowState": {
-        "description": "The state represents the state of the recovery flow.\n\nchoose_method: ask the user to choose a method (e.g. recover account via email)\nsent_email: the email has been sent to the user\npassed_challenge: the request was successful and the recovery challenge was passed.",
+        "description": "The experimental state represents the state of a recovery flow. This field is EXPERIMENTAL and subject to change!",
         "enum": [
           "choose_method",
           "sent_email",
           "passed_challenge"
         ],
-        "title": "Recovery Flow State"
+        "title": "Recovery flow state (experimental)"
       },
       "recoveryIdentityAddress": {
         "properties": {
@@ -1726,7 +1785,7 @@
       "registrationFlow": {
         "properties": {
           "active": {
-            "description": "Active, if set, contains the registration method that is being used. It is initially\nnot set.\npassword CredentialsTypePassword\noidc CredentialsTypeOIDC\ntotp CredentialsTypeTOTP\nlookup_secret CredentialsTypeLookup\nwebauthn CredentialsTypeWebAuthn\ncode CredentialsTypeCodeAuth\npasskey CredentialsTypePasskey\nprofile CredentialsTypeProfile\nlink_recovery CredentialsTypeRecoveryLink  CredentialsTypeRecoveryLink is a special credential type linked to the link strategy (recovery flow).  It is not used within the credentials object itself.\ncode_recovery CredentialsTypeRecoveryCode",
+            "description": "Active, if set, contains the registration method that is being used. It is initially\nnot set.\npassword CredentialsTypePassword\noidc CredentialsTypeOIDC\ntotp CredentialsTypeTOTP\nlookup_secret CredentialsTypeLookup\nwebauthn CredentialsTypeWebAuthn\ncode CredentialsTypeCodeAuth\npasskey CredentialsTypePasskey\nprofile CredentialsTypeProfile\nsaml CredentialsTypeSAML\nlink_recovery CredentialsTypeRecoveryLink  CredentialsTypeRecoveryLink is a special credential type linked to the link strategy (recovery flow).  It is not used within the credentials object itself.\ncode_recovery CredentialsTypeRecoveryCode",
             "enum": [
               "password",
               "oidc",
@@ -1736,11 +1795,12 @@
               "code",
               "passkey",
               "profile",
+              "saml",
               "link_recovery",
               "code_recovery"
             ],
             "type": "string",
-            "x-go-enum-desc": "password CredentialsTypePassword\noidc CredentialsTypeOIDC\ntotp CredentialsTypeTOTP\nlookup_secret CredentialsTypeLookup\nwebauthn CredentialsTypeWebAuthn\ncode CredentialsTypeCodeAuth\npasskey CredentialsTypePasskey\nprofile CredentialsTypeProfile\nlink_recovery CredentialsTypeRecoveryLink  CredentialsTypeRecoveryLink is a special credential type linked to the link strategy (recovery flow).  It is not used within the credentials object itself.\ncode_recovery CredentialsTypeRecoveryCode"
+            "x-go-enum-desc": "password CredentialsTypePassword\noidc CredentialsTypeOIDC\ntotp CredentialsTypeTOTP\nlookup_secret CredentialsTypeLookup\nwebauthn CredentialsTypeWebAuthn\ncode CredentialsTypeCodeAuth\npasskey CredentialsTypePasskey\nprofile CredentialsTypeProfile\nsaml CredentialsTypeSAML\nlink_recovery CredentialsTypeRecoveryLink  CredentialsTypeRecoveryLink is a special credential type linked to the link strategy (recovery flow).  It is not used within the credentials object itself.\ncode_recovery CredentialsTypeRecoveryCode"
           },
           "expires_at": {
             "description": "ExpiresAt is the time (UTC) when the flow expires. If the user still wishes to log in,\na new flow has to be initiated.",
@@ -1805,13 +1865,14 @@
         "type": "object"
       },
       "registrationFlowState": {
-        "description": "choose_method: ask the user to choose a method (e.g. registration with email)\nsent_email: the email has been sent to the user\npassed_challenge: the request was successful and the registration challenge was passed.",
+        "description": "The experimental state represents the state of a registration flow. This field is EXPERIMENTAL and subject to change!",
         "enum": [
           "choose_method",
           "sent_email",
           "passed_challenge"
         ],
-        "title": "State represents the state of this request:"
+        "title": "Registration flow state (experimental)",
+        "type": "string"
       },
       "selfServiceFlowExpiredError": {
         "description": "Is sent when a flow is expired",
@@ -2033,12 +2094,13 @@
         "type": "object"
       },
       "settingsFlowState": {
-        "description": "show_form: No user data has been collected, or it is invalid, and thus the form should be shown.\nsuccess: Indicates that the settings flow has been updated successfully with the provided data.\nDone will stay true when repeatedly checking. If set to true, done will revert back to false only\nwhen a flow with invalid (e.g. \"please use a valid phone number\") data was sent.",
+        "description": "The experimental state represents the state of a settings flow. This field is EXPERIMENTAL and subject to change!",
         "enum": [
           "show_form",
           "success"
         ],
-        "title": "State represents the state of this flow. It knows two states:"
+        "title": "Settings flow state (experimental)",
+        "type": "string"
       },
       "successfulCodeExchangeResponse": {
         "description": "The Response for Registration Flows via API",
@@ -2169,7 +2231,7 @@
             "$ref": "#/components/schemas/uiNodeAttributes"
           },
           "group": {
-            "description": "Group specifies which group (e.g. password authenticator) this node belongs to.\ndefault DefaultGroup\npassword PasswordGroup\noidc OpenIDConnectGroup\nprofile ProfileGroup\nlink LinkGroup\ncode CodeGroup\ntotp TOTPGroup\nlookup_secret LookupGroup\nwebauthn WebAuthnGroup\npasskey PasskeyGroup",
+            "description": "Group specifies which group (e.g. password authenticator) this node belongs to.\ndefault DefaultGroup\npassword PasswordGroup\noidc OpenIDConnectGroup\nprofile ProfileGroup\nlink LinkGroup\ncode CodeGroup\ntotp TOTPGroup\nlookup_secret LookupGroup\nwebauthn WebAuthnGroup\npasskey PasskeyGroup\nidentifier_first IdentifierFirstGroup",
             "enum": [
               "default",
               "password",
@@ -2180,10 +2242,11 @@
               "totp",
               "lookup_secret",
               "webauthn",
-              "passkey"
+              "passkey",
+              "identifier_first"
             ],
             "type": "string",
-            "x-go-enum-desc": "default DefaultGroup\npassword PasswordGroup\noidc OpenIDConnectGroup\nprofile ProfileGroup\nlink LinkGroup\ncode CodeGroup\ntotp TOTPGroup\nlookup_secret LookupGroup\nwebauthn WebAuthnGroup\npasskey PasskeyGroup"
+            "x-go-enum-desc": "default DefaultGroup\npassword PasswordGroup\noidc OpenIDConnectGroup\nprofile ProfileGroup\nlink LinkGroup\ncode CodeGroup\ntotp TOTPGroup\nlookup_secret LookupGroup\nwebauthn WebAuthnGroup\npasskey PasskeyGroup\nidentifier_first IdentifierFirstGroup"
           },
           "messages": {
             "$ref": "#/components/schemas/uiTexts"
@@ -2345,6 +2408,11 @@
           "label": {
             "$ref": "#/components/schemas/uiText"
           },
+          "maxlength": {
+            "description": "MaxLength may contain the input's maximum length.",
+            "format": "int64",
+            "type": "integer"
+          },
           "name": {
             "description": "The input's element name.",
             "type": "string"
@@ -2362,12 +2430,38 @@
             "x-go-enum-desc": "text Text\ninput Input\nimg Image\na Anchor\nscript Script"
           },
           "onclick": {
-            "description": "OnClick may contain javascript which should be executed on click. This is primarily\nused for WebAuthn.",
+            "description": "OnClick may contain javascript which should be executed on click. This is primarily\nused for WebAuthn.\n\nDeprecated: Using OnClick requires the use of eval() which is a security risk. Use OnClickTrigger instead.",
             "type": "string"
           },
+          "onclickTrigger": {
+            "description": "OnClickTrigger may contain a WebAuthn trigger which should be executed on click.\n\nThe trigger maps to a JavaScript function provided by Ory, which triggers actions such as PassKey registration or login.\noryWebAuthnRegistration WebAuthnTriggersWebAuthnRegistration\noryWebAuthnLogin WebAuthnTriggersWebAuthnLogin\noryPasskeyLogin WebAuthnTriggersPasskeyLogin\noryPasskeyLoginAutocompleteInit WebAuthnTriggersPasskeyLoginAutocompleteInit\noryPasskeyRegistration WebAuthnTriggersPasskeyRegistration\noryPasskeySettingsRegistration WebAuthnTriggersPasskeySettingsRegistration",
+            "enum": [
+              "oryWebAuthnRegistration",
+              "oryWebAuthnLogin",
+              "oryPasskeyLogin",
+              "oryPasskeyLoginAutocompleteInit",
+              "oryPasskeyRegistration",
+              "oryPasskeySettingsRegistration"
+            ],
+            "type": "string",
+            "x-go-enum-desc": "oryWebAuthnRegistration WebAuthnTriggersWebAuthnRegistration\noryWebAuthnLogin WebAuthnTriggersWebAuthnLogin\noryPasskeyLogin WebAuthnTriggersPasskeyLogin\noryPasskeyLoginAutocompleteInit WebAuthnTriggersPasskeyLoginAutocompleteInit\noryPasskeyRegistration WebAuthnTriggersPasskeyRegistration\noryPasskeySettingsRegistration WebAuthnTriggersPasskeySettingsRegistration"
+          },
           "onload": {
-            "description": "OnLoad may contain javascript which should be executed on load. This is primarily\nused for WebAuthn.",
+            "description": "OnLoad may contain javascript which should be executed on load. This is primarily\nused for WebAuthn.\n\nDeprecated: Using OnLoad requires the use of eval() which is a security risk. Use OnLoadTrigger instead.",
             "type": "string"
+          },
+          "onloadTrigger": {
+            "description": "OnLoadTrigger may contain a WebAuthn trigger which should be executed on load.\n\nThe trigger maps to a JavaScript function provided by Ory, which triggers actions such as PassKey registration or login.\noryWebAuthnRegistration WebAuthnTriggersWebAuthnRegistration\noryWebAuthnLogin WebAuthnTriggersWebAuthnLogin\noryPasskeyLogin WebAuthnTriggersPasskeyLogin\noryPasskeyLoginAutocompleteInit WebAuthnTriggersPasskeyLoginAutocompleteInit\noryPasskeyRegistration WebAuthnTriggersPasskeyRegistration\noryPasskeySettingsRegistration WebAuthnTriggersPasskeySettingsRegistration",
+            "enum": [
+              "oryWebAuthnRegistration",
+              "oryWebAuthnLogin",
+              "oryPasskeyLogin",
+              "oryPasskeyLoginAutocompleteInit",
+              "oryPasskeyRegistration",
+              "oryPasskeySettingsRegistration"
+            ],
+            "type": "string",
+            "x-go-enum-desc": "oryWebAuthnRegistration WebAuthnTriggersWebAuthnRegistration\noryWebAuthnLogin WebAuthnTriggersWebAuthnLogin\noryPasskeyLogin WebAuthnTriggersPasskeyLogin\noryPasskeyLoginAutocompleteInit WebAuthnTriggersPasskeyLoginAutocompleteInit\noryPasskeyRegistration WebAuthnTriggersPasskeyRegistration\noryPasskeySettingsRegistration WebAuthnTriggersPasskeySettingsRegistration"
           },
           "pattern": {
             "description": "The input's pattern.",
@@ -2597,6 +2691,7 @@
         "discriminator": {
           "mapping": {
             "code": "#/components/schemas/updateLoginFlowWithCodeMethod",
+            "identifier_first": "#/components/schemas/updateLoginFlowWithIdentifierFirstMethod",
             "lookup_secret": "#/components/schemas/updateLoginFlowWithLookupSecretMethod",
             "oidc": "#/components/schemas/updateLoginFlowWithOidcMethod",
             "passkey": "#/components/schemas/updateLoginFlowWithPasskeyMethod",
@@ -2627,12 +2722,19 @@
           },
           {
             "$ref": "#/components/schemas/updateLoginFlowWithPasskeyMethod"
+          },
+          {
+            "$ref": "#/components/schemas/updateLoginFlowWithIdentifierFirstMethod"
           }
         ]
       },
       "updateLoginFlowWithCodeMethod": {
         "description": "Update Login flow using the code method",
         "properties": {
+          "address": {
+            "description": "Address is the address to send the code to, in case that there are multiple addresses. This field\nis only used in two-factor flows and is ineffective for passwordless flows.",
+            "type": "string"
+          },
           "code": {
             "description": "Code is the 6 digits code sent to the user",
             "type": "string"
@@ -2661,6 +2763,32 @@
         "required": [
           "method",
           "csrf_token"
+        ],
+        "type": "object"
+      },
+      "updateLoginFlowWithIdentifierFirstMethod": {
+        "description": "Update Login Flow with Multi-Step Method",
+        "properties": {
+          "csrf_token": {
+            "description": "Sending the anti-csrf token is only required for browser login flows.",
+            "type": "string"
+          },
+          "identifier": {
+            "description": "Identifier is the email or username of the user trying to log in.",
+            "type": "string"
+          },
+          "method": {
+            "description": "Method should be set to \"password\" when logging in using the identifier and password strategy.",
+            "type": "string"
+          },
+          "transient_payload": {
+            "description": "Transient data to pass along to any webhooks",
+            "type": "object"
+          }
+        },
+        "required": [
+          "method",
+          "identifier"
         ],
         "type": "object"
       },
@@ -2694,7 +2822,7 @@
             "type": "string"
           },
           "id_token": {
-            "description": "IDToken is an optional id token provided by an OIDC provider\n\nIf submitted, it is verified using the OIDC provider's public key set and the claims are used to populate\nthe OIDC credentials of the identity.\nIf the OIDC provider does not store additional claims (such as name, etc.) in the IDToken itself, you can use\nthe `traits` field to populate the identity's traits. Note, that Apple only includes the users email in the IDToken.\n\nSupported providers are\nApple",
+            "description": "IDToken is an optional id token provided by an OIDC provider\n\nIf submitted, it is verified using the OIDC provider's public key set and the claims are used to populate\nthe OIDC credentials of the identity.\nIf the OIDC provider does not store additional claims (such as name, etc.) in the IDToken itself, you can use\nthe `traits` field to populate the identity's traits. Note, that Apple only includes the users email in the IDToken.\n\nSupported providers are\nApple\nGoogle",
             "type": "string"
           },
           "id_token_nonce": {
@@ -2929,8 +3057,9 @@
           "mapping": {
             "code": "#/components/schemas/updateRegistrationFlowWithCodeMethod",
             "oidc": "#/components/schemas/updateRegistrationFlowWithOidcMethod",
-            "passKey": "#/components/schemas/updateRegistrationFlowWithPasskeyMethod",
+            "passkey": "#/components/schemas/updateRegistrationFlowWithPasskeyMethod",
             "password": "#/components/schemas/updateRegistrationFlowWithPasswordMethod",
+            "profile": "#/components/schemas/updateRegistrationFlowWithProfileMethod",
             "webauthn": "#/components/schemas/updateRegistrationFlowWithWebAuthnMethod"
           },
           "propertyName": "method"
@@ -2950,6 +3079,9 @@
           },
           {
             "$ref": "#/components/schemas/updateRegistrationFlowWithPasskeyMethod"
+          },
+          {
+            "$ref": "#/components/schemas/updateRegistrationFlowWithProfileMethod"
           }
         ]
       },
@@ -2995,7 +3127,7 @@
             "type": "string"
           },
           "id_token": {
-            "description": "IDToken is an optional id token provided by an OIDC provider\n\nIf submitted, it is verified using the OIDC provider's public key set and the claims are used to populate\nthe OIDC credentials of the identity.\nIf the OIDC provider does not store additional claims (such as name, etc.) in the IDToken itself, you can use\nthe `traits` field to populate the identity's traits. Note, that Apple only includes the users email in the IDToken.\n\nSupported providers are\nApple",
+            "description": "IDToken is an optional id token provided by an OIDC provider\n\nIf submitted, it is verified using the OIDC provider's public key set and the claims are used to populate\nthe OIDC credentials of the identity.\nIf the OIDC provider does not store additional claims (such as name, etc.) in the IDToken itself, you can use\nthe `traits` field to populate the identity's traits. Note, that Apple only includes the users email in the IDToken.\n\nSupported providers are\nApple\nGoogle",
             "type": "string"
           },
           "id_token_nonce": {
@@ -3102,8 +3234,13 @@
             "type": "string"
           },
           "screen": {
-            "description": "Screen requests navigation to a previous screen.\n\nThis must be set to credential-selection to go back to the credential\nselection screen.",
-            "type": "string"
+            "description": "Screen requests navigation to a previous screen.\n\nThis must be set to credential-selection to go back to the credential\nselection screen.\ncredential-selection RegistrationScreenCredentialSelection nolint:gosec // not a credential\nprevious RegistrationScreenPrevious",
+            "enum": [
+              "credential-selection",
+              "previous"
+            ],
+            "type": "string",
+            "x-go-enum-desc": "credential-selection RegistrationScreenCredentialSelection nolint:gosec // not a credential\nprevious RegistrationScreenPrevious"
           },
           "traits": {
             "description": "Traits\n\nThe identity's traits.",
@@ -3594,13 +3731,13 @@
         "type": "object"
       },
       "verificationFlowState": {
-        "description": "The state represents the state of the verification flow.\n\nchoose_method: ask the user to choose a method (e.g. recover account via email)\nsent_email: the email has been sent to the user\npassed_challenge: the request was successful and the recovery challenge was passed.",
+        "description": "The experimental state represents the state of a verification flow. This field is EXPERIMENTAL and subject to change!",
         "enum": [
           "choose_method",
           "sent_email",
           "passed_challenge"
         ],
-        "title": "Verification Flow State"
+        "title": "Verification flow state (experimental)"
       },
       "version": {
         "properties": {
@@ -3796,7 +3933,7 @@
     },
     "/admin/identities": {
       "get": {
-        "description": "Lists all [identities](https://www.ory.sh/docs/kratos/concepts/identity-user-model) in the system.",
+        "description": "Lists all [identities](https://www.ory.sh/docs/kratos/concepts/identity-user-model) in the system. Note: filters cannot be combined.",
         "operationId": "listIdentities",
         "parameters": [
           {
@@ -3857,7 +3994,7 @@
             "x-go-enum-desc": " ConsistencyLevelUnset  ConsistencyLevelUnset is the unset / default consistency level.\nstrong ConsistencyLevelStrong  ConsistencyLevelStrong is the strong consistency level.\neventual ConsistencyLevelEventual  ConsistencyLevelEventual is the eventual consistency level using follower read timestamps."
           },
           {
-            "description": "List of ids used to filter identities.\nIf this list is empty, then no filter will be applied.",
+            "description": "Retrieve multiple identities by their IDs.\n\nThis parameter has the following limitations:\n\nDuplicate or non-existent IDs are ignored.\nThe order of returned IDs may be different from the request.\nThis filter does not support pagination. You must implement your own pagination as the maximum number of items returned by this endpoint may not exceed a certain threshold (currently 500).",
             "in": "query",
             "name": "ids",
             "schema": {
@@ -3892,6 +4029,14 @@
                 "type": "string"
               },
               "type": "array"
+            }
+          },
+          {
+            "description": "List identities that belong to a specific organization.",
+            "in": "query",
+            "name": "organization_id",
+            "schema": {
+              "type": "string"
             }
           }
         ],
@@ -4129,6 +4274,7 @@
                   "code",
                   "passkey",
                   "profile",
+                  "saml",
                   "link_recovery",
                   "code_recovery"
                 ],
@@ -4368,7 +4514,7 @@
             }
           },
           {
-            "description": "Type is the type of credentials to delete.\npassword CredentialsTypePassword\noidc CredentialsTypeOIDC\ntotp CredentialsTypeTOTP\nlookup_secret CredentialsTypeLookup\nwebauthn CredentialsTypeWebAuthn\ncode CredentialsTypeCodeAuth\npasskey CredentialsTypePasskey\nprofile CredentialsTypeProfile\nlink_recovery CredentialsTypeRecoveryLink  CredentialsTypeRecoveryLink is a special credential type linked to the link strategy (recovery flow).  It is not used within the credentials object itself.\ncode_recovery CredentialsTypeRecoveryCode",
+            "description": "Type is the type of credentials to delete.\npassword CredentialsTypePassword\noidc CredentialsTypeOIDC\ntotp CredentialsTypeTOTP\nlookup_secret CredentialsTypeLookup\nwebauthn CredentialsTypeWebAuthn\ncode CredentialsTypeCodeAuth\npasskey CredentialsTypePasskey\nprofile CredentialsTypeProfile\nsaml CredentialsTypeSAML\nlink_recovery CredentialsTypeRecoveryLink  CredentialsTypeRecoveryLink is a special credential type linked to the link strategy (recovery flow).  It is not used within the credentials object itself.\ncode_recovery CredentialsTypeRecoveryCode",
             "in": "path",
             "name": "type",
             "required": true,
@@ -4382,12 +4528,13 @@
                 "code",
                 "passkey",
                 "profile",
+                "saml",
                 "link_recovery",
                 "code_recovery"
               ],
               "type": "string"
             },
-            "x-go-enum-desc": "password CredentialsTypePassword\noidc CredentialsTypeOIDC\ntotp CredentialsTypeTOTP\nlookup_secret CredentialsTypeLookup\nwebauthn CredentialsTypeWebAuthn\ncode CredentialsTypeCodeAuth\npasskey CredentialsTypePasskey\nprofile CredentialsTypeProfile\nlink_recovery CredentialsTypeRecoveryLink  CredentialsTypeRecoveryLink is a special credential type linked to the link strategy (recovery flow).  It is not used within the credentials object itself.\ncode_recovery CredentialsTypeRecoveryCode"
+            "x-go-enum-desc": "password CredentialsTypePassword\noidc CredentialsTypeOIDC\ntotp CredentialsTypeTOTP\nlookup_secret CredentialsTypeLookup\nwebauthn CredentialsTypeWebAuthn\ncode CredentialsTypeCodeAuth\npasskey CredentialsTypePasskey\nprofile CredentialsTypeProfile\nsaml CredentialsTypeSAML\nlink_recovery CredentialsTypeRecoveryLink  CredentialsTypeRecoveryLink is a special credential type linked to the link strategy (recovery flow).  It is not used within the credentials object itself.\ncode_recovery CredentialsTypeRecoveryCode"
           },
           {
             "description": "Identifier is the identifier of the OIDC credential to delete.\nFind the identifier by calling the `GET /admin/identities/{id}?include_credential=oidc` endpoint.",
@@ -5490,7 +5637,15 @@
             }
           },
           {
-            "description": "Via should contain the identity's credential the code should be sent to. Only relevant in aal2 flows.",
+            "description": "An optional organization ID that should be used for logging this user in.\nThis parameter is only effective in the Ory Network.",
+            "in": "query",
+            "name": "organization",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Via should contain the identity's credential the code should be sent to. Only relevant in aal2 flows.\n\nDEPRECATED: This field is deprecated. Please remove it from your requests. The user will now see a choice\nof MFA credentials to choose from to perform the second factor instead.",
             "in": "query",
             "name": "via",
             "schema": {
@@ -5590,7 +5745,7 @@
             }
           },
           {
-            "description": "Via should contain the identity's credential the code should be sent to. Only relevant in aal2 flows.",
+            "description": "Via should contain the identity's credential the code should be sent to. Only relevant in aal2 flows.\n\nDEPRECATED: This field is deprecated. Please remove it from your requests. The user will now see a choice\nof MFA credentials to choose from to perform the second factor instead.",
             "in": "query",
             "name": "via",
             "schema": {
@@ -6286,6 +6441,14 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "description": "An optional organization ID that should be used to register this user.\nThis parameter is only effective in the Ory Network.",
+            "in": "query",
+            "name": "organization",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -6356,6 +6519,7 @@
             }
           },
           {
+            "description": "An optional organization ID that should be used to register this user.\nThis parameter is only effective in the Ory Network.",
             "in": "query",
             "name": "organization",
             "schema": {
@@ -6944,6 +7108,16 @@
       "get": {
         "description": "This endpoint initiates a verification flow for API clients such as mobile devices, smart TVs, and so on.\n\nTo fetch an existing verification flow call `/self-service/verification/flows?flow=\u003cflow_id\u003e`.\n\nYou MUST NOT use this endpoint in client-side (Single Page Apps, ReactJS, AngularJS) nor server-side (Java Server\nPages, NodeJS, PHP, Golang, ...) browser applications. Using this endpoint in these applications will make\nyou vulnerable to a variety of CSRF attacks.\n\nThis endpoint MUST ONLY be used in scenarios such as native mobile apps (React Native, Objective C, Swift, Java, ...).\n\nMore information can be found at [Ory Email and Phone Verification Documentation](https://www.ory.sh/docs/kratos/self-service/flows/verify-email-account-activation).",
         "operationId": "createNativeVerificationFlow",
+        "parameters": [
+          {
+            "description": "A URL contained in the return_to key of the verification flow.\nThis piece of data has no effect on the actual logic of the flow and is purely informational.",
+            "in": "query",
+            "name": "return_to",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {

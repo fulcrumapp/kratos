@@ -6,6 +6,8 @@ package login
 import (
 	"net/http"
 
+	"github.com/gofrs/uuid"
+
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/ory/kratos/selfservice/sessiontokenexchange"
@@ -79,19 +81,21 @@ func (s *ErrorHandler) PrepareReplacementForExpiredFlow(w http.ResponseWriter, r
 }
 
 func (s *ErrorHandler) WriteFlowError(w http.ResponseWriter, r *http.Request, f *Flow, group node.UiNodeGroup, err error) {
-	s.d.Audit().
+	logger := s.d.Audit().
 		WithError(err).
 		WithRequest(r).
-		WithField("login_flow", f).
+		WithField("login_flow", f.ToLoggerField())
+
+	logger.
 		Info("Encountered self-service login error.")
 
 	if f == nil {
-		trace.SpanFromContext(r.Context()).AddEvent(events.NewLoginFailed(r.Context(), "", "", false))
+		trace.SpanFromContext(r.Context()).AddEvent(events.NewLoginFailed(r.Context(), uuid.Nil, "", "", false, err))
 		s.forward(w, r, nil, err)
 		return
 	}
 
-	trace.SpanFromContext(r.Context()).AddEvent(events.NewLoginFailed(r.Context(), string(f.Type), string(f.RequestedAAL), f.Refresh))
+	trace.SpanFromContext(r.Context()).AddEvent(events.NewLoginFailed(r.Context(), f.ID, string(f.Type), string(f.RequestedAAL), f.Refresh, err))
 
 	if expired, inner := s.PrepareReplacementForExpiredFlow(w, r, f, err); inner != nil {
 		s.WriteFlowError(w, r, f, group, inner)

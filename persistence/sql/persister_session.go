@@ -10,6 +10,7 @@ import (
 
 	"github.com/ory/herodot"
 	"github.com/ory/x/dbal"
+	"github.com/ory/x/pointerx"
 
 	"github.com/gobuffalo/pop/v6"
 	"github.com/gofrs/uuid"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/ory/kratos/identity"
 	"github.com/ory/kratos/session"
+	"github.com/ory/kratos/x"
 	"github.com/ory/kratos/x/events"
 	"github.com/ory/x/otelx"
 	"github.com/ory/x/pagination/keysetpagination"
@@ -67,12 +69,11 @@ func (p *Persister) GetSession(ctx context.Context, sid uuid.UUID, expandables s
 	return &s, nil
 }
 
-func (p *Persister) ListSessions(ctx context.Context, active *bool, paginatorOpts []keysetpagination.Option, expandables session.Expandables) (_ []session.Session, _ int64, _ *keysetpagination.Paginator, err error) {
+func (p *Persister) ListSessions(ctx context.Context, active *bool, paginatorOpts []keysetpagination.Option, expandables session.Expandables) (_ []session.Session, _ *keysetpagination.Paginator, err error) {
 	ctx, span := p.r.Tracer(ctx).Tracer().Start(ctx, "persistence.sql.ListSessions")
 	defer otelx.End(span, &err)
 
 	s := make([]session.Session, 0)
-	t := int64(0)
 	nid := p.NetworkID(ctx)
 
 	paginatorOpts = append(paginatorOpts, keysetpagination.WithDefaultSize(paginationDefaultItemsSize))
@@ -80,6 +81,10 @@ func (p *Persister) ListSessions(ctx context.Context, active *bool, paginatorOpt
 	paginatorOpts = append(paginatorOpts, keysetpagination.WithDefaultToken(new(session.Session).DefaultPageToken()))
 	paginatorOpts = append(paginatorOpts, keysetpagination.WithColumn("created_at", "DESC"))
 	paginator := keysetpagination.GetPaginator(paginatorOpts...)
+
+	if _, err := uuid.FromString(paginator.Token().Parse("id")["id"]); err != nil {
+		return nil, nil, errors.WithStack(x.PageTokenInvalid)
+	}
 
 	if err := p.Transaction(ctx, func(ctx context.Context, c *pop.Connection) error {
 		q := c.Where("nid = ?", nid)
@@ -90,13 +95,6 @@ func (p *Persister) ListSessions(ctx context.Context, active *bool, paginatorOpt
 				q.Where("(active = ? OR expires_at < ?)", *active, time.Now().UTC())
 			}
 		}
-
-		// Get the total count of matching items
-		total, err := q.Count(new(session.Session))
-		if err != nil {
-			return sqlcon.HandleError(err)
-		}
-		t = int64(total)
 
 		if len(expandables) > 0 {
 			q = q.EagerPreload(expandables.ToEager()...)
@@ -109,7 +107,7 @@ func (p *Persister) ListSessions(ctx context.Context, active *bool, paginatorOpt
 
 		return nil
 	}); err != nil {
-		return nil, 0, nil, err
+		return nil, nil, err
 	}
 
 	for k := range s {
@@ -117,12 +115,12 @@ func (p *Persister) ListSessions(ctx context.Context, active *bool, paginatorOpt
 			continue
 		}
 		if err := p.InjectTraitsSchemaURL(ctx, s[k].Identity); err != nil {
-			return nil, 0, nil, err
+			return nil, nil, err
 		}
 	}
 
 	s, nextPage := keysetpagination.Result(s, paginator)
-	return s, t, nextPage, nil
+	return s, nextPage, nil
 }
 
 // ListSessionsByIdentity retrieves sessions for an identity from the store.
@@ -165,7 +163,7 @@ func (p *Persister) ListSessionsByIdentity(
 		}
 		t = int64(total)
 
-		q.Order("authenticated_at DESC")
+		q.Order("created_at DESC")
 
 		// Get the paginated list of matching items
 		if err := q.Paginate(page, perPage).All(&s); err != nil {
@@ -286,10 +284,10 @@ func (p *Persister) UpsertSession(ctx context.Context, s *session.Session) (err 
 			device.NID = s.NID
 
 			if device.Location != nil {
-				device.Location = stringsx.GetPointer(stringsx.TruncateByteLen(*device.Location, SessionDeviceLocationMaxLength))
+				device.Location = pointerx.Ptr(stringsx.TruncateByteLen(*device.Location, SessionDeviceLocationMaxLength))
 			}
 			if device.UserAgent != nil {
-				device.UserAgent = stringsx.GetPointer(stringsx.TruncateByteLen(*device.UserAgent, SessionDeviceUserAgentMaxLength))
+				device.UserAgent = pointerx.Ptr(stringsx.TruncateByteLen(*device.UserAgent, SessionDeviceUserAgentMaxLength))
 			}
 
 			if err := p.DevicePersister.CreateDevice(ctx, device); err != nil {

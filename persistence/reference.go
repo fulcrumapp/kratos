@@ -7,6 +7,8 @@ import (
 	"context"
 	"time"
 
+	"github.com/ory/kratos/x"
+
 	"github.com/ory/kratos/selfservice/sessiontokenexchange"
 	"github.com/ory/x/networkx"
 
@@ -56,14 +58,15 @@ type Persister interface {
 
 	CleanupDatabase(context.Context, time.Duration, time.Duration, int) error
 	Close(context.Context) error
-	Ping() error
-	MigrationStatus(c context.Context) (popx.MigrationStatuses, error)
-	MigrateDown(c context.Context, steps int) error
-	MigrateUp(c context.Context) error
+	Ping(context.Context) error
+	MigrationStatus(context.Context) (popx.MigrationStatuses, error)
+	MigrateDown(ctx context.Context, steps int) error
+	MigrateUp(context.Context) error
 	Migrator() *popx.Migrator
 	MigrationBox() *popx.MigrationBox
-	GetConnection(ctx context.Context) *pop.Connection
-	Transaction(ctx context.Context, callback func(ctx context.Context, connection *pop.Connection) error) error
+	GetConnection(context.Context) *pop.Connection
+	Connection(ctx context.Context) *pop.Connection
+	x.TransactionalPersister
 	Networker
 }
 

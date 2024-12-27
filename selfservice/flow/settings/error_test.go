@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	confighelpers "github.com/ory/kratos/driver/config/testhelpers"
+
 	"github.com/pkg/errors"
 
 	"github.com/gofrs/uuid"
@@ -69,7 +71,7 @@ func TestHandleError(t *testing.T) {
 	require.NoError(t, reg.PrivilegedIdentityPool().CreateIdentity(context.Background(), &id))
 
 	router.GET("/error", func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
-		h.WriteFlowError(w, r, flowMethod, settingsFlow, &id, flowError)
+		h.WriteFlowError(ctx, w, r, flowMethod, settingsFlow, &id, flowError)
 	})
 
 	router.GET("/fake-redirect", func(w http.ResponseWriter, r *http.Request, p httprouter.Params) {
@@ -88,7 +90,7 @@ func TestHandleError(t *testing.T) {
 		require.NoError(t, err)
 
 		for _, s := range reg.SettingsStrategies(context.Background()) {
-			require.NoError(t, s.PopulateSettingsMethod(req, &id, f))
+			require.NoError(t, s.PopulateSettingsMethod(ctx, req, &id, f))
 		}
 
 		require.NoError(t, reg.SettingsFlowPersister().CreateSettingsFlow(context.Background(), f))
@@ -101,7 +103,7 @@ func TestHandleError(t *testing.T) {
 		defer res.Body.Close()
 		require.Contains(t, res.Request.URL.String(), conf.SelfServiceFlowErrorURL(ctx).String()+"?id=")
 
-		sse, _, err := sdk.FrontendApi.GetFlowError(context.Background()).
+		sse, _, err := sdk.FrontendAPI.GetFlowError(context.Background()).
 			Id(res.Request.URL.Query().Get("id")).Execute()
 		require.NoError(t, err)
 
@@ -149,11 +151,12 @@ func TestHandleError(t *testing.T) {
 				t.Cleanup(reset)
 
 				req := httptest.NewRequest("GET", "/sessions/whoami", nil)
+				req.WithContext(confighelpers.WithConfigValue(ctx, config.ViperKeySessionLifespan, time.Hour))
 
 				// This needs an authenticated client in order to call the RouteGetFlow endpoint
-				s, err := session.NewActiveSession(req, &id, testhelpers.NewSessionLifespanProvider(time.Hour), time.Now(), identity.CredentialsTypePassword, identity.AuthenticatorAssuranceLevel1)
+				s, err := testhelpers.NewActiveSession(req, reg, &id, time.Now(), identity.CredentialsTypePassword, identity.AuthenticatorAssuranceLevel1)
 				require.NoError(t, err)
-				c := testhelpers.NewHTTPClientWithSessionToken(t, reg, s)
+				c := testhelpers.NewHTTPClientWithSessionToken(t, ctx, reg, s)
 
 				settingsFlow = newFlow(t, time.Minute, tc.t)
 				flowError = flow.NewFlowExpiredError(expiredAnHourAgo)

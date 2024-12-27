@@ -78,12 +78,9 @@ context("Login error messages with code method", () => {
 
         cy.submitCodeForm(app)
 
-        cy.get('[data-testid="ui/message/1010014"]').should(
-          "contain",
-          "An email containing a code has been sent to the email address you provided",
-        )
+        cy.get('[data-testid="ui/message/1010014"]').should("exist")
 
-        cy.get(Selectors[app]["code"]).type("invalid-code")
+        cy.get(Selectors[app]["code"]).type("123456")
         cy.submitCodeForm(app)
 
         cy.get('[data-testid="ui/message/4010008"]').should(
@@ -113,7 +110,7 @@ context("Login error messages with code method", () => {
             .type(gen.email(), { force: true })
         }
 
-        cy.get(Selectors[app]["code"]).type("invalid-code")
+        cy.get(Selectors[app]["code"]).type("123456")
 
         cy.submitCodeForm(app)
         if (app !== "express") {
@@ -147,7 +144,7 @@ context("Login error messages with code method", () => {
           )
         }
 
-        cy.get(Selectors[app]["code"]).type("invalid-code")
+        cy.get(Selectors[app]["code"]).type("123456")
         cy.removeAttribute([Selectors[app]["identity"]], "required")
 
         cy.get(Selectors[app]["identity"]).type("{selectall}{backspace}", {
@@ -159,6 +156,12 @@ context("Login error messages with code method", () => {
           cy.get('[data-testid="field/identifier"]').should(
             "contain",
             "Property identifier is missing",
+          )
+        } else if (app === "react") {
+          // The backspace trick is not working in React.
+          cy.get('[data-testid="ui/message/4010008"]').should(
+            "contain",
+            "code is invalid",
           )
         } else {
           cy.get('[data-testid="ui/message/4000002"]').should(

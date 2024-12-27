@@ -211,7 +211,7 @@ func TestVerification(t *testing.T) {
 		assert.Equal(t, http.StatusOK, res.StatusCode)
 		assert.Contains(t, res.Request.URL.String(), conf.SelfServiceFlowVerificationUI(ctx).String()+"?flow=")
 
-		sr, _, err := testhelpers.NewSDKCustomClient(public, c).FrontendApi.GetVerificationFlow(context.Background()).Id(res.Request.URL.Query().Get("flow")).Execute()
+		sr, _, err := testhelpers.NewSDKCustomClient(public, c).FrontendAPI.GetVerificationFlow(context.Background()).Id(res.Request.URL.Query().Get("flow")).Execute()
 		require.NoError(t, err)
 
 		require.Len(t, sr.Ui.Messages, 1)
@@ -248,7 +248,7 @@ func TestVerification(t *testing.T) {
 		})
 
 		message := testhelpers.CourierExpectMessage(ctx, t, reg, verificationEmail, "Please verify your email address")
-		assert.Contains(t, message.Body, "Hi, please verify your account by clicking the following link")
+		assert.Contains(t, message.Body, "Verify your account by opening the following link")
 
 		verificationLink := testhelpers.CourierExpectLinkInMessage(t, message, 1)
 
@@ -263,7 +263,7 @@ func TestVerification(t *testing.T) {
 		assert.Contains(t, res.Request.URL.String(), conf.SelfServiceFlowVerificationUI(ctx).String())
 		assert.NotContains(t, res.Request.URL.String(), gjson.Get(body, "id").String())
 
-		sr, _, err := testhelpers.NewSDKCustomClient(public, c).FrontendApi.GetVerificationFlow(context.Background()).Id(res.Request.URL.Query().Get("flow")).Execute()
+		sr, _, err := testhelpers.NewSDKCustomClient(public, c).FrontendAPI.GetVerificationFlow(context.Background()).Id(res.Request.URL.Query().Get("flow")).Execute()
 		require.NoError(t, err)
 
 		require.Len(t, sr.Ui.Messages, 1)
@@ -283,7 +283,7 @@ func TestVerification(t *testing.T) {
 			assertx.EqualAsJSON(t, text.NewVerificationEmailSent(), json.RawMessage(gjson.Get(actual, "ui.messages.0").Raw))
 
 			message := testhelpers.CourierExpectMessage(ctx, t, reg, verificationEmail, "Please verify your email address")
-			assert.Contains(t, message.Body, "please verify your account by clicking the following link")
+			assert.Contains(t, message.Body, "Verify your account by opening the following link")
 
 			verificationLink := testhelpers.CourierExpectLinkInMessage(t, message, 1)
 
