@@ -116,7 +116,7 @@ require (
 	github.com/cortesi/moddwatch v0.1.0 // indirect
 	github.com/cortesi/termlog v0.0.0-20210222042314-a1eec763abec // indirect
 	github.com/dgraph-io/ristretto/v2 v2.0.0 // indirect
-	github.com/jackc/pgx/v5 v5.6.0 // indirect
+	github.com/jackc/pgx/v5 v5.7.2 // indirect
 	github.com/rjeczalik/notify v0.9.3 // indirect
 	golang.org/x/term v0.27.0 // indirect
 	golang.org/x/time v0.8.0 // indirect
@@ -217,7 +217,7 @@ require (
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgproto3/v2 v2.3.3 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
-	github.com/jackc/puddle/v2 v2.2.1 // indirect
+	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/jandelgado/gcov2lcov v1.0.5 // indirect
 	github.com/jessevdk/go-flags v1.5.0 // indirect
 	github.com/joho/godotenv v1.5.1 // indirect
