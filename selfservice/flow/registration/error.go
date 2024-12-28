@@ -6,6 +6,8 @@ package registration
 import (
 	"net/http"
 
+	"github.com/gofrs/uuid"
+
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/ory/kratos/identity"
@@ -72,6 +74,7 @@ func (s *ErrorHandler) PrepareReplacementForExpiredFlow(w http.ResponseWriter, r
 
 	return e.WithFlow(a), nil
 }
+
 func (s *ErrorHandler) WriteFlowError(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -79,23 +82,24 @@ func (s *ErrorHandler) WriteFlowError(
 	group node.UiNodeGroup,
 	err error,
 ) {
-
 	if dup := new(identity.ErrDuplicateCredentials); errors.As(err, &dup) {
 		err = schema.NewDuplicateCredentialsError(dup)
 	}
 
-	s.d.Audit().
+	logger := s.d.Audit().
 		WithError(err).
 		WithRequest(r).
-		WithField("registration_flow", f).
+		WithField("registration_flow", f.ToLoggerField())
+
+	logger.
 		Info("Encountered self-service flow error.")
 
 	if f == nil {
-		trace.SpanFromContext(r.Context()).AddEvent(events.NewRegistrationFailed(r.Context(), "", ""))
+		trace.SpanFromContext(r.Context()).AddEvent(events.NewRegistrationFailed(r.Context(), uuid.Nil, "", "", err))
 		s.forward(w, r, nil, err)
 		return
 	}
-	trace.SpanFromContext(r.Context()).AddEvent(events.NewRegistrationFailed(r.Context(), string(f.Type), f.Active.String()))
+	trace.SpanFromContext(r.Context()).AddEvent(events.NewRegistrationFailed(r.Context(), f.ID, string(f.Type), f.Active.String(), err))
 
 	if expired, inner := s.PrepareReplacementForExpiredFlow(w, r, f, err); inner != nil {
 		s.forward(w, r, f, err)

@@ -12,8 +12,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"sync"
 	"testing"
 	"time"
+
+	confighelpers "github.com/ory/kratos/driver/config/testhelpers"
 
 	"github.com/davecgh/go-spew/spew"
 	"github.com/gofrs/uuid"
@@ -240,8 +243,8 @@ func TestRecovery(t *testing.T) {
 			assert.Len(t, gjson.Get(recoverySubmissionResponse, "ui.messages").Array(), 1, "%s", recoverySubmissionResponse)
 			assertx.EqualAsJSON(t, text.NewRecoveryEmailWithCodeSent(), json.RawMessage(gjson.Get(recoverySubmissionResponse, "ui.messages.0").Raw))
 
-			message := testhelpers.CourierExpectMessage(ctx, t, reg, recoveryEmail, "Recover access to your account")
-			assert.Contains(t, message.Body, "please recover access to your account by entering the following code")
+			message := testhelpers.CourierExpectMessage(ctx, t, reg, recoveryEmail, "Use code")
+			assert.Contains(t, message.Body, "Recover access to your account by entering")
 
 			recoveryCode := testhelpers.CourierExpectCodeInMessage(t, message, 1)
 			assert.NotEmpty(t, recoveryCode)
@@ -251,6 +254,15 @@ func TestRecovery(t *testing.T) {
 		}
 
 		t.Run("type=browser", func(t *testing.T) {
+			var wg sync.WaitGroup
+			wg.Add(1)
+			testhelpers.NewRecoveryAfterHookWebHookTarget(ctx, t, conf, func(t *testing.T, msg []byte) {
+				defer wg.Done()
+				assert.EqualValues(t, "recoverme1@ory.sh", gjson.GetBytes(msg, "identity.verifiable_addresses.0.value").String(), string(msg))
+				assert.EqualValues(t, true, gjson.GetBytes(msg, "identity.verifiable_addresses.0.verified").Bool(), string(msg))
+				assert.EqualValues(t, "completed", gjson.GetBytes(msg, "identity.verifiable_addresses.0.status").String(), string(msg))
+			})
+
 			client := testhelpers.NewClientWithCookies(t)
 			email := "recoverme1@ory.sh"
 			createIdentityToRecover(t, reg, email)
@@ -268,6 +280,8 @@ func TestRecovery(t *testing.T) {
 			require.NoError(t, res.Body.Close())
 			assert.Equal(t, "code_recovery", gjson.Get(body, "authentication_methods.0.method").String(), "%s", body)
 			assert.Equal(t, "aal1", gjson.Get(body, "authenticator_assurance_level").String(), "%s", body)
+
+			wg.Wait()
 		})
 
 		t.Run("type=spa", func(t *testing.T) {
@@ -314,7 +328,7 @@ func TestRecovery(t *testing.T) {
 			formPayload.Set("transient_payload", templatePayload)
 
 			body, _ := testhelpers.RecoveryMakeRequest(t, false, f, client, formPayload.Encode())
-			message := testhelpers.CourierExpectMessage(ctx, t, reg, email, "Recover access to your account")
+			message := testhelpers.CourierExpectMessage(ctx, t, reg, email, "Use code")
 			assert.Equal(t, templatePayload, gjson.GetBytes(message.TemplateData, "transient_payload").String(),
 				"should pass transient payload to email template")
 
@@ -520,10 +534,10 @@ func TestRecovery(t *testing.T) {
 				}
 				req := httptest.NewRequest("GET", "/sessions/whoami", nil)
 
-				session, err := session.NewActiveSession(
-					req,
-					&identity.Identity{ID: x.NewUUID(), State: identity.StateActive},
-					testhelpers.NewSessionLifespanProvider(time.Hour),
+				req.WithContext(confighelpers.WithConfigValue(ctx, config.ViperKeySessionLifespan, time.Hour))
+				session, err := testhelpers.NewActiveSession(req,
+					reg,
+					&identity.Identity{ID: x.NewUUID(), State: identity.StateActive, NID: x.NewUUID()},
 					time.Now(),
 					identity.CredentialsTypePassword,
 					identity.AuthenticatorAssuranceLevel1,
@@ -532,7 +546,7 @@ func TestRecovery(t *testing.T) {
 				require.NoError(t, err)
 
 				// Add the authentication to the request
-				client.Transport = testhelpers.NewTransportWithLogger(testhelpers.NewAuthorizedTransport(t, reg, session), t).RoundTripper
+				client.Transport = testhelpers.NewTransportWithLogger(testhelpers.NewAuthorizedTransport(t, ctx, reg, session), t).RoundTripper
 
 				v := testhelpers.SDKFormFieldsToURLValues(f.Ui.Nodes)
 				v.Set("email", "some-email@example.org")
@@ -605,7 +619,7 @@ func TestRecovery(t *testing.T) {
 				addr, err := reg.IdentityPool().FindVerifiableAddressByValue(context.Background(), identity.VerifiableAddressTypeEmail, email)
 				assert.NoError(t, err)
 
-				emailText := testhelpers.CourierExpectMessage(ctx, t, reg, email, "Recover access to your account")
+				emailText := testhelpers.CourierExpectMessage(ctx, t, reg, email, "Use code")
 				recoveryCode := testhelpers.CourierExpectCodeInMessage(t, emailText, 1)
 
 				// Deactivate the identity
@@ -632,7 +646,7 @@ func TestRecovery(t *testing.T) {
 		id := createIdentityToRecover(t, reg, email)
 
 		req := httptest.NewRequest("GET", "/sessions/whoami", nil)
-		sess, err := session.NewActiveSession(req, id, conf, time.Now(), identity.CredentialsTypePassword, identity.AuthenticatorAssuranceLevel1)
+		sess, err := testhelpers.NewActiveSession(req, reg, id, time.Now(), identity.CredentialsTypePassword, identity.AuthenticatorAssuranceLevel1)
 		require.NoError(t, err)
 		require.NoError(t, reg.SessionPersister().UpsertSession(context.Background(), sess))
 
@@ -644,7 +658,7 @@ func TestRecovery(t *testing.T) {
 		actual := expectSuccessfulRecovery(t, cl, RecoveryClientTypeBrowser, func(v url.Values) {
 			v.Set("email", email)
 		})
-		message := testhelpers.CourierExpectMessage(ctx, t, reg, email, "Recover access to your account")
+		message := testhelpers.CourierExpectMessage(ctx, t, reg, email, "Use code")
 		recoveryCode := testhelpers.CourierExpectCodeInMessage(t, message, 1)
 
 		cl.CheckRedirect = func(req *http.Request, via []*http.Request) error {
@@ -705,7 +719,7 @@ func TestRecovery(t *testing.T) {
 					v.Set("email", recoveryEmail)
 				}, http.StatusOK)
 
-				message := testhelpers.CourierExpectMessage(ctx, t, reg, recoveryEmail, "Recover access to your account")
+				message := testhelpers.CourierExpectMessage(ctx, t, reg, recoveryEmail, "Use code")
 				recoveryCode := testhelpers.CourierExpectCodeInMessage(t, message, 1)
 
 				form := withCSRFToken(t, testCase.ClientType, actual, url.Values{
@@ -724,7 +738,7 @@ func TestRecovery(t *testing.T) {
 
 				rs, res, err := testhelpers.
 					NewSDKCustomClient(public, c).
-					FrontendApi.GetRecoveryFlow(context.Background()).
+					FrontendAPI.GetRecoveryFlow(context.Background()).
 					Id(flowId).
 					Execute()
 
@@ -816,8 +830,8 @@ func TestRecovery(t *testing.T) {
 
 		initialFlowId := gjson.Get(body, "id")
 
-		message := testhelpers.CourierExpectMessage(ctx, t, reg, recoveryEmail, "Recover access to your account")
-		assert.Contains(t, message.Body, "please recover access to your account by entering the following code")
+		message := testhelpers.CourierExpectMessage(ctx, t, reg, recoveryEmail, "Use code")
+		assert.Contains(t, message.Body, "Recover access to your account by entering")
 
 		recoveryCode := testhelpers.CourierExpectCodeInMessage(t, message, 1)
 
@@ -871,7 +885,7 @@ func TestRecovery(t *testing.T) {
 		assert.True(t, gjson.Get(body, "ui.nodes.#(attributes.name==code)").Exists())
 		assert.Equal(t, recoveryEmail, gjson.Get(body, "ui.nodes.#(attributes.name==email).attributes.value").String())
 
-		message := testhelpers.CourierExpectMessage(ctx, t, reg, recoveryEmail, "Recover access to your account")
+		message := testhelpers.CourierExpectMessage(ctx, t, reg, recoveryEmail, "Use code")
 		recoveryCode := testhelpers.CourierExpectCodeInMessage(t, message, 1)
 
 		submitRecoveryCode(t, c, body, RecoveryClientTypeBrowser, recoveryCode, http.StatusOK)
@@ -890,14 +904,14 @@ func TestRecovery(t *testing.T) {
 		require.NotEmpty(t, action)
 		assert.Equal(t, recoveryEmail, gjson.Get(body, "ui.nodes.#(attributes.name==email).attributes.value").String())
 
-		message1 := testhelpers.CourierExpectMessage(ctx, t, reg, recoveryEmail, "Recover access to your account")
+		message1 := testhelpers.CourierExpectMessage(ctx, t, reg, recoveryEmail, "Use code")
 		recoveryCode1 := testhelpers.CourierExpectCodeInMessage(t, message1, 1)
 
 		body = resendRecoveryCode(t, c, body, RecoveryClientTypeBrowser, http.StatusOK)
 		assert.True(t, gjson.Get(body, "ui.nodes.#(attributes.name==code)").Exists())
 		assert.Equal(t, recoveryEmail, gjson.Get(body, "ui.nodes.#(attributes.name==email).attributes.value").String())
 
-		message2 := testhelpers.CourierExpectMessage(ctx, t, reg, recoveryEmail, "Recover access to your account")
+		message2 := testhelpers.CourierExpectMessage(ctx, t, reg, recoveryEmail, "Use code")
 		recoveryCode2 := testhelpers.CourierExpectCodeInMessage(t, message2, 1)
 
 		body = submitRecoveryCode(t, c, body, RecoveryClientTypeBrowser, recoveryCode1, http.StatusOK)
@@ -941,7 +955,7 @@ func TestRecovery(t *testing.T) {
 			v.Set("email", recoveryEmail)
 		})
 
-		message := testhelpers.CourierExpectMessage(ctx, t, reg, recoveryEmail, "Recover access to your account")
+		message := testhelpers.CourierExpectMessage(ctx, t, reg, recoveryEmail, "Use code")
 		recoveryCode := testhelpers.CourierExpectCodeInMessage(t, message, 1)
 
 		action := gjson.Get(body, "ui.action").String()
@@ -973,7 +987,7 @@ func TestRecovery(t *testing.T) {
 			v.Set("email", recoveryEmail)
 		})
 
-		message := testhelpers.CourierExpectMessage(ctx, t, reg, recoveryEmail, "Recover access to your account")
+		message := testhelpers.CourierExpectMessage(ctx, t, reg, recoveryEmail, "Use code")
 		recoveryCode := testhelpers.CourierExpectCodeInMessage(t, message, 1)
 
 		action := gjson.Get(body, "ui.action").String()
@@ -988,7 +1002,7 @@ func TestRecovery(t *testing.T) {
 		body = submitRecoveryCode(t, cl, body, RecoveryClientTypeBrowser, recoveryCode, http.StatusSeeOther)
 		assert.NotEqual(t, gjson.Get(body, "id"), initialFlowId)
 
-		require.Len(t, cl.Jar.Cookies(urlx.ParseOrPanic(public.URL)), 1)
+		require.Len(t, cl.Jar.Cookies(urlx.ParseOrPanic(public.URL)), 1) // No session
 		cookies := spew.Sdump(cl.Jar.Cookies(urlx.ParseOrPanic(public.URL)))
 		assert.NotContains(t, cookies, "ory_kratos_session")
 	})
@@ -1115,8 +1129,8 @@ func TestRecovery_WithContinueWith(t *testing.T) {
 			assert.Len(t, gjson.Get(recoverySubmissionResponse, "ui.messages").Array(), 1, "%s", recoverySubmissionResponse)
 			assertx.EqualAsJSON(t, text.NewRecoveryEmailWithCodeSent(), json.RawMessage(gjson.Get(recoverySubmissionResponse, "ui.messages.0").Raw))
 
-			message := testhelpers.CourierExpectMessage(ctx, t, reg, recoveryEmail, "Recover access to your account")
-			assert.Contains(t, message.Body, "please recover access to your account by entering the following code")
+			message := testhelpers.CourierExpectMessage(ctx, t, reg, recoveryEmail, "Use code")
+			assert.Contains(t, message.Body, "Recover access to your account by entering")
 
 			recoveryCode := testhelpers.CourierExpectCodeInMessage(t, message, 1)
 			assert.NotEmpty(t, recoveryCode)
@@ -1360,11 +1374,12 @@ func TestRecovery_WithContinueWith(t *testing.T) {
 					f = testhelpers.InitializeRecoveryFlowViaBrowser(t, client, isSPA, public, nil)
 				}
 				req := httptest.NewRequest("GET", "/sessions/whoami", nil)
+				req.WithContext(confighelpers.WithConfigValue(ctx, config.ViperKeySessionLifespan, time.Hour))
 
-				session, err := session.NewActiveSession(
+				session, err := testhelpers.NewActiveSession(
 					req,
-					&identity.Identity{ID: x.NewUUID(), State: identity.StateActive},
-					testhelpers.NewSessionLifespanProvider(time.Hour),
+					reg,
+					&identity.Identity{ID: x.NewUUID(), State: identity.StateActive, NID: x.NewUUID()},
 					time.Now(),
 					identity.CredentialsTypePassword,
 					identity.AuthenticatorAssuranceLevel1,
@@ -1373,7 +1388,7 @@ func TestRecovery_WithContinueWith(t *testing.T) {
 				require.NoError(t, err)
 
 				// Add the authentication to the request
-				client.Transport = testhelpers.NewTransportWithLogger(testhelpers.NewAuthorizedTransport(t, reg, session), t).RoundTripper
+				client.Transport = testhelpers.NewTransportWithLogger(testhelpers.NewAuthorizedTransport(t, ctx, reg, session), t).RoundTripper
 
 				v := testhelpers.SDKFormFieldsToURLValues(f.Ui.Nodes)
 				v.Set("email", "some-email@example.org")
@@ -1432,7 +1447,7 @@ func TestRecovery_WithContinueWith(t *testing.T) {
 				addr, err := reg.IdentityPool().FindVerifiableAddressByValue(context.Background(), identity.VerifiableAddressTypeEmail, email)
 				assert.NoError(t, err)
 
-				emailText := testhelpers.CourierExpectMessage(ctx, t, reg, email, "Recover access to your account")
+				emailText := testhelpers.CourierExpectMessage(ctx, t, reg, email, "Use code")
 				recoveryCode := testhelpers.CourierExpectCodeInMessage(t, emailText, 1)
 
 				// Deactivate the identity
@@ -1463,7 +1478,7 @@ func TestRecovery_WithContinueWith(t *testing.T) {
 				email := testhelpers.RandomEmail()
 				id := createIdentityToRecover(t, reg, email)
 
-				otherSession, err := session.NewActiveSession(httptest.NewRequest("GET", "/sessions/whoami", nil), id, conf, time.Now(), identity.CredentialsTypePassword, identity.AuthenticatorAssuranceLevel1)
+				otherSession, err := testhelpers.NewActiveSession(httptest.NewRequest("GET", "/sessions/whoami", nil), reg, id, time.Now(), identity.CredentialsTypePassword, identity.AuthenticatorAssuranceLevel1)
 				require.NoError(t, err)
 				require.NoError(t, reg.SessionPersister().UpsertSession(ctx, otherSession))
 
@@ -1475,7 +1490,7 @@ func TestRecovery_WithContinueWith(t *testing.T) {
 				actual := submitRecoveryForm(t, cl, testCase.ClientType, func(v url.Values) {
 					v.Set("email", email)
 				}, http.StatusOK)
-				message := testhelpers.CourierExpectMessage(ctx, t, reg, email, "Recover access to your account")
+				message := testhelpers.CourierExpectMessage(ctx, t, reg, email, "Use code")
 				recoveryCode := testhelpers.CourierExpectCodeInMessage(t, message, 1)
 
 				submitCodeAndExpectRedirectToSettings(t, cl, testCase.ClientType, recoveryCode, actual)
@@ -1552,7 +1567,7 @@ func TestRecovery_WithContinueWith(t *testing.T) {
 					v.Set("email", recoveryEmail)
 				}, http.StatusOK)
 
-				message := testhelpers.CourierExpectMessage(ctx, t, reg, recoveryEmail, "Recover access to your account")
+				message := testhelpers.CourierExpectMessage(ctx, t, reg, recoveryEmail, "Use code")
 				recoveryCode := testhelpers.CourierExpectCodeInMessage(t, message, 1)
 
 				form := withCSRFToken(t, testCase.ClientType, actual, url.Values{
@@ -1571,7 +1586,7 @@ func TestRecovery_WithContinueWith(t *testing.T) {
 
 				rs, res, err := testhelpers.
 					NewSDKCustomClient(public, c).
-					FrontendApi.GetRecoveryFlow(context.Background()).
+					FrontendAPI.GetRecoveryFlow(context.Background()).
 					Id(flowId).
 					Execute()
 
@@ -1628,7 +1643,7 @@ func TestRecovery_WithContinueWith(t *testing.T) {
 				v.Set("email", recoveryEmail)
 			}, http.StatusOK)
 
-			message := testhelpers.CourierExpectMessage(ctx, t, reg, recoveryEmail, "Recover access to your account")
+			message := testhelpers.CourierExpectMessage(ctx, t, reg, recoveryEmail, "Use code")
 			recoveryCode := testhelpers.CourierExpectCodeInMessage(t, message, 1)
 
 			action := gjson.Get(actual, "ui.action").String()
@@ -1741,8 +1756,8 @@ func TestRecovery_WithContinueWith(t *testing.T) {
 
 				initialFlowId := gjson.Get(body, "id")
 
-				message := testhelpers.CourierExpectMessage(ctx, t, reg, recoveryEmail, "Recover access to your account")
-				assert.Contains(t, message.Body, "please recover access to your account by entering the following code")
+				message := testhelpers.CourierExpectMessage(ctx, t, reg, recoveryEmail, "Use code")
+				assert.Contains(t, message.Body, "Recover access to your account by entering")
 
 				recoveryCode := testhelpers.CourierExpectCodeInMessage(t, message, 1)
 
@@ -1809,7 +1824,7 @@ func TestRecovery_WithContinueWith(t *testing.T) {
 				assert.True(t, gjson.Get(body, "ui.nodes.#(attributes.name==code)").Exists())
 				assert.Equal(t, recoveryEmail, gjson.Get(body, "ui.nodes.#(attributes.name==email).attributes.value").String())
 
-				message := testhelpers.CourierExpectMessage(ctx, t, reg, recoveryEmail, "Recover access to your account")
+				message := testhelpers.CourierExpectMessage(ctx, t, reg, recoveryEmail, "Use code")
 				recoveryCode := testhelpers.CourierExpectCodeInMessage(t, message, 1)
 
 				submitCodeAndExpectRedirectToSettings(t, c, testCase.ClientType, recoveryCode, body)
@@ -1832,14 +1847,14 @@ func TestRecovery_WithContinueWith(t *testing.T) {
 				require.NotEmpty(t, action)
 				assert.Equal(t, recoveryEmail, gjson.Get(body, "ui.nodes.#(attributes.name==email).attributes.value").String())
 
-				message1 := testhelpers.CourierExpectMessage(ctx, t, reg, recoveryEmail, "Recover access to your account")
+				message1 := testhelpers.CourierExpectMessage(ctx, t, reg, recoveryEmail, "Use code")
 				recoveryCode1 := testhelpers.CourierExpectCodeInMessage(t, message1, 1)
 
 				body = resendRecoveryCode(t, c, body, testCase.ClientType, http.StatusOK)
 				assert.True(t, gjson.Get(body, "ui.nodes.#(attributes.name==code)").Exists())
 				assert.Equal(t, recoveryEmail, gjson.Get(body, "ui.nodes.#(attributes.name==email).attributes.value").String())
 
-				message2 := testhelpers.CourierExpectMessage(ctx, t, reg, recoveryEmail, "Recover access to your account")
+				message2 := testhelpers.CourierExpectMessage(ctx, t, reg, recoveryEmail, "Use code")
 				recoveryCode2 := testhelpers.CourierExpectCodeInMessage(t, message2, 1)
 
 				body = submitRecoveryCode(t, c, body, testCase.ClientType, recoveryCode1, http.StatusOK)
@@ -1889,7 +1904,7 @@ func TestRecovery_WithContinueWith(t *testing.T) {
 					v.Set("email", recoveryEmail)
 				}, http.StatusOK)
 
-				message := testhelpers.CourierExpectMessage(ctx, t, reg, recoveryEmail, "Recover access to your account")
+				message := testhelpers.CourierExpectMessage(ctx, t, reg, recoveryEmail, "Use code")
 				recoveryCode := testhelpers.CourierExpectCodeInMessage(t, message, 1)
 
 				action := gjson.Get(body, "ui.action").String()
@@ -1917,7 +1932,7 @@ func TestRecovery_WithContinueWith(t *testing.T) {
 					v.Set("email", recoveryEmail)
 				}, http.StatusOK)
 
-				message := testhelpers.CourierExpectMessage(ctx, t, reg, recoveryEmail, "Recover access to your account")
+				message := testhelpers.CourierExpectMessage(ctx, t, reg, recoveryEmail, "Use code")
 				recoveryCode := testhelpers.CourierExpectCodeInMessage(t, message, 1)
 
 				action := gjson.Get(body, "ui.action").String()
@@ -1972,7 +1987,7 @@ func TestDisabledStrategy(t *testing.T) {
 			require.NoError(t, reg.IdentityManager().Create(context.Background(),
 				&id, identity.ManagerAllowWriteProtectedTraits))
 
-			rl, _, err := adminSDK.IdentityApi.
+			rl, _, err := adminSDK.IdentityAPI.
 				CreateRecoveryLinkForIdentity(context.Background()).
 				CreateRecoveryLinkForIdentityBody(kratos.CreateRecoveryLinkForIdentityBody{IdentityId: id.ID.String()}).
 				Execute()

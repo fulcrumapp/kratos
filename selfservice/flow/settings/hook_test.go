@@ -24,7 +24,6 @@ import (
 	"github.com/ory/kratos/selfservice/flow"
 	"github.com/ory/kratos/selfservice/flow/settings"
 	"github.com/ory/kratos/selfservice/hook"
-	"github.com/ory/kratos/session"
 	"github.com/ory/kratos/x"
 )
 
@@ -54,11 +53,11 @@ func TestSettingsExecutor(t *testing.T) {
 					if i == nil {
 						i = testhelpers.SelfServiceHookCreateFakeIdentity(t, reg)
 					}
-					sess, _ := session.NewActiveSession(r, i, conf, time.Now().UTC(), identity.CredentialsTypePassword, identity.AuthenticatorAssuranceLevel1)
+					sess, _ := testhelpers.NewActiveSession(r, reg, i, time.Now().UTC(), identity.CredentialsTypePassword, identity.AuthenticatorAssuranceLevel1)
 
 					f, err := settings.NewFlow(conf, time.Minute, r, sess.Identity, ft)
 					require.NoError(t, err)
-					if handleErr(t, w, r, reg.SettingsHookExecutor().PreSettingsHook(w, r, f)) {
+					if handleErr(t, w, r, reg.SettingsHookExecutor().PreSettingsHook(r.Context(), w, r, f)) {
 						_, _ = w.Write([]byte("ok"))
 					}
 				})
@@ -67,14 +66,14 @@ func TestSettingsExecutor(t *testing.T) {
 					if i == nil {
 						i = testhelpers.SelfServiceHookCreateFakeIdentity(t, reg)
 					}
-					sess, _ := session.NewActiveSession(r, i, conf, time.Now().UTC(), identity.CredentialsTypePassword, identity.AuthenticatorAssuranceLevel1)
+					sess, _ := testhelpers.NewActiveSession(r, reg, i, time.Now().UTC(), identity.CredentialsTypePassword, identity.AuthenticatorAssuranceLevel1)
 
 					a, err := settings.NewFlow(conf, time.Minute, r, sess.Identity, ft)
 					require.NoError(t, err)
 					a.RequestURL = x.RequestURL(r).String()
 					require.NoError(t, reg.SettingsFlowPersister().CreateSettingsFlow(r.Context(), a))
 					_ = handleErr(t, w, r, reg.SettingsHookExecutor().
-						PostSettingsHook(w, r, strategy, &settings.UpdateContext{Flow: a, Session: sess}, i))
+						PostSettingsHook(ctx, w, r, strategy, &settings.UpdateContext{Flow: a, Session: sess}, i))
 				})
 				ts := httptest.NewServer(router)
 				t.Cleanup(ts.Close)
@@ -99,6 +98,16 @@ func TestSettingsExecutor(t *testing.T) {
 					res, _ := makeRequestPost(t, newServer(t, nil, flow.TypeBrowser), false, url.Values{})
 					assert.EqualValues(t, http.StatusOK, res.StatusCode)
 					assert.Contains(t, res.Request.URL.String(), uiURL)
+				})
+
+				t.Run("case=pass without hooks if ajax client", func(t *testing.T) {
+					t.Cleanup(testhelpers.SelfServiceHookConfigReset(t, conf))
+
+					ts := newServer(t, nil, flow.TypeBrowser)
+					res, body := makeRequestPost(t, ts, true, url.Values{})
+					assert.EqualValues(t, http.StatusOK, res.StatusCode)
+					assert.Contains(t, res.Request.URL.String(), ts.URL)
+					assert.EqualValues(t, gjson.Get(body, "continue_with.0.action").String(), "redirect_browser_to")
 				})
 
 				t.Run("case=pass if hooks pass", func(t *testing.T) {

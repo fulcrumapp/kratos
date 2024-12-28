@@ -253,7 +253,7 @@ func TestSessionWhoAmI(t *testing.T) {
 
 				i := identity.Identity{Traits: []byte("{}"), State: identity.StateActive}
 				require.NoError(t, reg.PrivilegedIdentityPool().CreateIdentity(context.Background(), &i))
-				s, err := session.NewActiveSession(&i, conf, time.Now(), identity.CredentialsTypePassword)
+				s, err := testhelpers.NewActiveSession(&i, conf, time.Now(), identity.CredentialsTypePassword)
 				require.NoError(t, err)
 				require.NoError(t, reg.SessionPersister().UpsertSession(context.Background(), s))
 				require.NotEmpty(t, s.Token)
@@ -560,7 +560,7 @@ func TestHandlerAdminSessionManagement(t *testing.T) {
 		})
 
 		t.Run("should redirect to public for whoami", func(t *testing.T) {
-			client := testhelpers.NewHTTPClientWithSessionToken(t, reg, s)
+			client := testhelpers.NewHTTPClientWithSessionToken(t, ctx, reg, s)
 			client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 				return http.ErrUseLastResponse
 			}
@@ -590,7 +590,6 @@ func TestHandlerAdminSessionManagement(t *testing.T) {
 			res, err := client.Do(req)
 			require.NoError(t, err)
 			assert.Equal(t, http.StatusOK, res.StatusCode)
-			assert.Equal(t, "1", res.Header.Get("X-Total-Count"))
 
 			assertPageToken(t, uuid.Nil.String(), res.Header.Get("Link"))
 
@@ -639,7 +638,6 @@ func TestHandlerAdminSessionManagement(t *testing.T) {
 					res, err := client.Do(req)
 					require.NoError(t, err)
 					assert.Equal(t, http.StatusOK, res.StatusCode)
-					assert.Equal(t, "1", res.Header.Get("X-Total-Count"))
 					assertPageToken(t, uuid.Nil.String(), res.Header.Get("Link"))
 
 					body := ioutilx.MustReadAll(res.Body)
@@ -812,7 +810,7 @@ func TestHandlerAdminSessionManagement(t *testing.T) {
 			t.Run(fmt.Sprintf("active=%#v", tc.activeOnly), func(t *testing.T) {
 				sessions, _, _ := reg.SessionPersister().ListSessionsByIdentity(ctx, i.ID, nil, 1, 10, uuid.Nil, ExpandEverything)
 				require.Equal(t, 5, len(sessions))
-				assert.True(t, sort.IsSorted(sort.Reverse(byAuthenticatedAt(sessions))))
+				assert.True(t, sort.IsSorted(sort.Reverse(byCreatedAt(sessions))))
 
 				reqURL := ts.URL + "/admin/identities/" + i.ID.String() + "/sessions"
 				if tc.activeOnly != "" {
@@ -830,9 +828,6 @@ func TestHandlerAdminSessionManagement(t *testing.T) {
 					actualSessionIds = append(actualSessionIds, s.ID)
 				}
 
-				totalCount, err := strconv.Atoi(res.Header.Get("X-Total-Count"))
-				require.NoError(t, err)
-				assert.Equal(t, len(tc.expectedSessionIds), totalCount)
 				assert.NotEqual(t, "", res.Header.Get("Link"))
 				assert.ElementsMatch(t, tc.expectedSessionIds, actualSessionIds)
 			})
@@ -895,9 +890,6 @@ func TestHandlerSelfServiceSessionManagement(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, http.StatusOK, res.StatusCode)
 
-		totalCount, err := strconv.Atoi(res.Header.Get("X-Total-Count"))
-		require.NoError(t, err)
-		require.Equal(t, numSessionsActive, totalCount)
 		require.NotEqual(t, "", res.Header.Get("Link"))
 	})
 
@@ -1088,10 +1080,10 @@ func TestHandlerRefreshSessionBySessionID(t *testing.T) {
 	})
 }
 
-type byAuthenticatedAt []Session
+type byCreatedAt []Session
 
-func (s byAuthenticatedAt) Len() int      { return len(s) }
-func (s byAuthenticatedAt) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
-func (s byAuthenticatedAt) Less(i, j int) bool {
-	return s[i].AuthenticatedAt.Before(s[j].AuthenticatedAt)
+func (s byCreatedAt) Len() int      { return len(s) }
+func (s byCreatedAt) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
+func (s byCreatedAt) Less(i, j int) bool {
+	return s[i].CreatedAt.Before(s[j].CreatedAt)
 }

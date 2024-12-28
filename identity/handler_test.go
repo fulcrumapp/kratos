@@ -307,6 +307,21 @@ func TestHandler(t *testing.T) {
 			}
 		})
 
+		t.Run("with password migration hook enabled", func(t *testing.T) {
+			res := send(t, adminTS, "POST", "/identities", http.StatusCreated, identity.CreateIdentityBody{
+				Traits: []byte(`{"email": "pw-migration-hook@ory.sh"}`),
+				Credentials: &identity.IdentityWithCredentials{Password: &identity.AdminIdentityImportCredentialsPassword{
+					Config: identity.AdminIdentityImportCredentialsPasswordConfig{UsePasswordMigrationHook: true},
+				}},
+			})
+			actual, err := reg.PrivilegedIdentityPool().GetIdentityConfidential(ctx, uuid.FromStringOrNil(res.Get("id").String()))
+			require.NoError(t, err)
+
+			snapshotx.SnapshotT(t, identity.WithCredentialsAndAdminMetadataInJSON(*actual), snapshotx.ExceptNestedKeys(ignoreDefault...), snapshotx.ExceptNestedKeys("hashed_password"))
+
+			assert.True(t, gjson.GetBytes(actual.Credentials[identity.CredentialsTypePassword].Config, "use_password_migration_hook").Bool())
+		})
+
 		t.Run("with not-normalized email", func(t *testing.T) {
 			res := send(t, adminTS, "POST", "/identities", http.StatusCreated, identity.CreateIdentityBody{
 				SchemaID: "customer",
@@ -354,19 +369,53 @@ func TestHandler(t *testing.T) {
 				id := x.ParseUUID(res.Get("id").String())
 				ids = append(ids, id)
 			}
-			require.Equal(t, len(ids), identitiesAmount)
+			require.Len(t, ids, identitiesAmount)
 		})
 
-		t.Run("case= list few identities", func(t *testing.T) {
-			url := "/identities?ids=" + ids[0].String()
+		t.Run("case=list few identities", func(t *testing.T) {
+			url := "/identities?ids=" + ids[0].String() + "&ids=" + ids[0].String() // duplicate ID is deduplicated in result
 			for i := 1; i < listAmount; i++ {
 				url += "&ids=" + ids[i].String()
 			}
-			res := get(t, adminTS, url, 200)
+			res := get(t, adminTS, url, http.StatusOK)
 
 			identities := res.Array()
-			require.Equal(t, len(identities), listAmount)
+			require.Len(t, identities, listAmount)
 		})
+	})
+
+	t.Run("case=list identities by ID is capped at 500", func(t *testing.T) {
+		url := "/identities?ids=" + x.NewUUID().String()
+		for i := 0; i < 501; i++ {
+			url += "&ids=" + x.NewUUID().String()
+		}
+		res := get(t, adminTS, url, http.StatusBadRequest)
+		assert.Contains(t, res.Get("error.reason").String(), "must not exceed 500")
+	})
+
+	t.Run("case=list identities cannot combine filters", func(t *testing.T) {
+		filters := []string{
+			"ids=" + x.NewUUID().String(),
+			"credentials_identifier=foo@bar.com",
+			"preview_credentials_identifier_similar=bar.com",
+			"organization_id=" + x.NewUUID().String(),
+		}
+		for i := range filters {
+			for j := range filters {
+				if i == j {
+					continue // OK to use the same filter multiple times. Behavior varies by filter, though.
+				}
+
+				url := "/identities?" + filters[i] + "&" + filters[j]
+				res := get(t, adminTS, url, http.StatusBadRequest)
+				assert.Contains(t, res.Get("error.reason").String(), "cannot combine multiple filters")
+			}
+		}
+	})
+
+	t.Run("case=malformed ids should return an error", func(t *testing.T) {
+		res := get(t, adminTS, "/identities?ids=not-a-uuid", http.StatusBadRequest)
+		assert.Contains(t, res.Get("error.reason").String(), "Invalid UUID value `not-a-uuid` for parameter `ids`.", "%s", res.Raw)
 	})
 
 	t.Run("suite=create and update", func(t *testing.T) {
@@ -734,7 +783,7 @@ func TestHandler(t *testing.T) {
 	})
 
 	t.Run("suite=PATCH identities", func(t *testing.T) {
-		t.Run("case=fails on > 100 identities", func(t *testing.T) {
+		t.Run("case=fails with too many patches", func(t *testing.T) {
 			tooMany := make([]*identity.BatchIdentityPatch, identity.BatchPatchIdentitiesLimit+1)
 			for i := range tooMany {
 				tooMany[i] = &identity.BatchIdentityPatch{Create: validCreateIdentityBody("too-many-patches", i)}
@@ -744,53 +793,83 @@ func TestHandler(t *testing.T) {
 			assert.Contains(t, res.Get("error.reason").String(), strconv.Itoa(identity.BatchPatchIdentitiesLimit),
 				"the error reason should contain the limit")
 		})
-		t.Run("case=fails all on a bad identity", func(t *testing.T) {
+		t.Run("case=fails some on a bad identity", func(t *testing.T) {
 			// Test setup: we have a list of valid identitiy patches and a list of invalid ones.
 			// Each run adds one invalid patch to the list and sends it to the server.
-			// --> we expect the server to fail all patches in the list.
-			// Finally, we send just the valid patches
+			// --> we expect the server to fail only the bad patches in the list.
+			// Finally, we send just valid patches
 			// --> we expect the server to succeed all patches in the list.
-			validPatches := []*identity.BatchIdentityPatch{
-				{Create: validCreateIdentityBody("valid-patch", 0)},
-				{Create: validCreateIdentityBody("valid-patch", 1)},
-				{Create: validCreateIdentityBody("valid-patch", 2)},
-				{Create: validCreateIdentityBody("valid-patch", 3)},
-				{Create: validCreateIdentityBody("valid-patch", 4)},
-			}
 
-			for _, tt := range []struct {
-				name         string
-				body         *identity.CreateIdentityBody
-				expectStatus int
-			}{
-				{
-					name:         "missing all fields",
-					body:         &identity.CreateIdentityBody{},
-					expectStatus: http.StatusBadRequest,
-				},
-				{
-					name:         "duplicate identity",
-					body:         validCreateIdentityBody("valid-patch", 0),
-					expectStatus: http.StatusConflict,
-				},
-				{
-					name: "invalid traits",
-					body: &identity.CreateIdentityBody{
-						Traits: json.RawMessage(`"invalid traits"`),
-					},
-					expectStatus: http.StatusBadRequest,
-				},
-			} {
-				t.Run("invalid because "+tt.name, func(t *testing.T) {
-					patches := append([]*identity.BatchIdentityPatch{}, validPatches...)
-					patches = append(patches, &identity.BatchIdentityPatch{Create: tt.body})
+			t.Run("case=invalid patches fail", func(t *testing.T) {
+				patches := []*identity.BatchIdentityPatch{
+					{Create: validCreateIdentityBody("valid", 0)},
+					{Create: validCreateIdentityBody("valid", 1)},
+					{Create: &identity.CreateIdentityBody{}}, // <-- invalid: missing all fields
+					{Create: validCreateIdentityBody("valid", 2)},
+					{Create: validCreateIdentityBody("valid", 0)}, // <-- duplicate
+					{Create: validCreateIdentityBody("valid", 3)},
+					{Create: &identity.CreateIdentityBody{Traits: json.RawMessage(`"invalid traits"`)}}, // <-- invalid traits
+					{Create: validCreateIdentityBody("valid", 4)},
+				}
+				expectedToPass := []*identity.BatchIdentityPatch{patches[0], patches[1], patches[3], patches[5], patches[7]}
 
-					req := &identity.BatchPatchIdentitiesBody{Identities: patches}
-					send(t, adminTS, "PATCH", "/identities", tt.expectStatus, req)
-				})
-			}
+				// Create unique IDs for each patch
+				patchIDs := make([]string, len(patches))
+				for i, p := range patches {
+					id := uuid.NewV5(uuid.Nil, fmt.Sprintf("%d", i))
+					p.ID = &id
+					patchIDs[i] = id.String()
+				}
+
+				req := &identity.BatchPatchIdentitiesBody{Identities: patches}
+				body := send(t, adminTS, "PATCH", "/identities", http.StatusOK, req)
+				var actions []string
+				require.NoErrorf(t, json.Unmarshal(([]byte)(body.Get("identities.#.action").Raw), &actions), "%s", body)
+				assert.Equalf(t,
+					[]string{"create", "create", "error", "create", "error", "create", "error", "create"},
+					actions, "%s", body)
+
+				// Check that all patch IDs are returned
+				for i, gotPatchID := range body.Get("identities.#.patch_id").Array() {
+					assert.Equal(t, patchIDs[i], gotPatchID.String())
+				}
+
+				// Check specific errors
+				assert.Equal(t, "Bad Request", body.Get("identities.2.error.status").String())
+				assert.Equal(t, "Conflict", body.Get("identities.4.error.status").String())
+				assert.Equal(t, "Bad Request", body.Get("identities.6.error.status").String())
+
+				var identityIDs []uuid.UUID
+				require.NoErrorf(t, json.Unmarshal(([]byte)(body.Get("identities.#.identity").Raw), &identityIDs), "%s", body)
+
+				actualIdentities, _, err := reg.Persister().ListIdentities(ctx, identity.ListIdentityParameters{IdsFilter: identityIDs})
+				require.NoError(t, err)
+				actualIdentityIDs := make([]uuid.UUID, len(actualIdentities))
+				for i, id := range actualIdentities {
+					actualIdentityIDs[i] = id.ID
+				}
+				assert.ElementsMatchf(t, identityIDs, actualIdentityIDs, "%s", body)
+
+				expectedTraits := make(map[string]string, len(expectedToPass))
+				for i, p := range expectedToPass {
+					expectedTraits[identityIDs[i].String()] = string(p.Create.Traits)
+				}
+				actualTraits := make(map[string]string, len(actualIdentities))
+				for _, id := range actualIdentities {
+					actualTraits[id.ID.String()] = string(id.Traits)
+				}
+
+				assert.Equal(t, expectedTraits, actualTraits)
+			})
 
 			t.Run("valid patches succeed", func(t *testing.T) {
+				validPatches := []*identity.BatchIdentityPatch{
+					{Create: validCreateIdentityBody("valid-patch", 0)},
+					{Create: validCreateIdentityBody("valid-patch", 1)},
+					{Create: validCreateIdentityBody("valid-patch", 2)},
+					{Create: validCreateIdentityBody("valid-patch", 3)},
+					{Create: validCreateIdentityBody("valid-patch", 4)},
+				}
 				req := &identity.BatchPatchIdentitiesBody{Identities: validPatches}
 				send(t, adminTS, "PATCH", "/identities", http.StatusOK, req)
 			})
@@ -1442,6 +1521,44 @@ func TestHandler(t *testing.T) {
 		}
 	})
 
+	t.Run("organizations", func(t *testing.T) {
+		t.Run("case=should list organization identities", func(t *testing.T) {
+			for name, ts := range map[string]*httptest.Server{"admin": adminTS} {
+				t.Run("endpoint="+name, func(t *testing.T) {
+					orgID := uuid.Must(uuid.NewV4())
+					email := x.NewUUID().String() + "@ory.sh"
+					reg.IdentityManager().Create(ctx, &identity.Identity{
+						Traits:         identity.Traits(`{"email":"` + email + `"}`),
+						OrganizationID: uuid.NullUUID{UUID: orgID, Valid: true},
+					})
+
+					res := get(t, ts, "/identities?organization_id="+orgID.String(), http.StatusOK)
+					assert.Len(t, res.Array(), 1)
+					assert.EqualValues(t, email, res.Get(`0.traits.email`).String(), "%s", res.Raw)
+				})
+			}
+		})
+
+		t.Run("case=malformed organization id should return an error", func(t *testing.T) {
+			for name, ts := range map[string]*httptest.Server{"admin": adminTS} {
+				t.Run("endpoint="+name, func(t *testing.T) {
+					res := get(t, ts, "/identities?organization_id=not-a-uuid", http.StatusBadRequest)
+					assert.Contains(t, res.Get("error.reason").String(), "Invalid UUID value `not-a-uuid` for parameter `organization_id`.", "%s", res.Raw)
+				})
+			}
+		})
+
+		t.Run("case=unknown organization id should return an empty list", func(t *testing.T) {
+			for name, ts := range map[string]*httptest.Server{"admin": adminTS} {
+				t.Run("endpoint="+name, func(t *testing.T) {
+					id := x.NewUUID()
+					res := get(t, ts, "/identities?organization_id="+id.String(), http.StatusOK)
+					assert.Len(t, res.Array(), 0)
+				})
+			}
+		})
+	})
+
 	t.Run("case=should list all identities with credentials", func(t *testing.T) {
 		t.Run("include_credential=oidc should include OIDC credentials config", func(t *testing.T) {
 			res := get(t, adminTS, "/identities?include_credential=oidc&credentials_identifier=bar:foo.oidc@bar.com", http.StatusOK)
@@ -1614,7 +1731,7 @@ func TestHandler(t *testing.T) {
 							AddedAt:     time.Date(2022, 12, 16, 14, 11, 55, 0, time.UTC),
 							PublicKey:   []byte("pQECAyYgASFYIMJLQhJxQRzhnKPTcPCUODOmxYDYo2obrm9bhp5lvSZ3IlggXjhZvJaPUqF9PXqZqTdWYPR7R+b2n/Wi+IxKKXsS4rU="),
 							DisplayName: "test",
-							Authenticator: identity.AuthenticatorWebAuthn{
+							Authenticator: &identity.AuthenticatorWebAuthn{
 								AAGUID:       []byte("rc4AAjW8xgpkiwsl8fBVAw=="),
 								SignCount:    0,
 								CloneWarning: false,
@@ -1627,7 +1744,7 @@ func TestHandler(t *testing.T) {
 							AddedAt:     time.Date(2022, 12, 16, 14, 11, 55, 0, time.UTC),
 							PublicKey:   []byte("pQECAyYgASFYIMJLQhJxQRzhnKPTcPCUODOmxYDYo2obrm9bhp5lvSZ3IlggXjhZvJaPUqF9PXqZqTdWYPR7R+b2n/Wi+IxKKXsS4rU="),
 							DisplayName: "test",
-							Authenticator: identity.AuthenticatorWebAuthn{
+							Authenticator: &identity.AuthenticatorWebAuthn{
 								AAGUID:       []byte("rc4AAjW8xgpkiwsl8fBVAw=="),
 								SignCount:    0,
 								CloneWarning: false,
@@ -1640,7 +1757,7 @@ func TestHandler(t *testing.T) {
 							AddedAt:     time.Date(2022, 12, 16, 14, 11, 55, 0, time.UTC),
 							PublicKey:   []byte("pQECAyYgASFYIMJLQhJxQRzhnKPTcPCUODOmxYDYo2obrm9bhp5lvSZ3IlggXjhZvJaPUqF9PXqZqTdWYPR7R+b2n/Wi+IxKKXsS4rU="),
 							DisplayName: "test",
-							Authenticator: identity.AuthenticatorWebAuthn{
+							Authenticator: &identity.AuthenticatorWebAuthn{
 								AAGUID:       []byte("rc4AAjW8xgpkiwsl8fBVAw=="),
 								SignCount:    0,
 								CloneWarning: false,
@@ -1653,7 +1770,7 @@ func TestHandler(t *testing.T) {
 							AddedAt:     time.Date(2022, 12, 16, 14, 11, 55, 0, time.UTC),
 							PublicKey:   []byte("pQECAyYgASFYIMJLQhJxQRzhnKPTcPCUODOmxYDYo2obrm9bhp5lvSZ3IlggXjhZvJaPUqF9PXqZqTdWYPR7R+b2n/Wi+IxKKXsS4rU="),
 							DisplayName: "test",
-							Authenticator: identity.AuthenticatorWebAuthn{
+							Authenticator: &identity.AuthenticatorWebAuthn{
 								AAGUID:       []byte("rc4AAjW8xgpkiwsl8fBVAw=="),
 								SignCount:    0,
 								CloneWarning: false,
@@ -1860,7 +1977,7 @@ func validCreateIdentityBody(prefix string, i int) *identity.CreateIdentityBody 
 		identity.VerifiableAddressStatusCompleted,
 	}
 
-	for j := 0; j < 4; j++ {
+	for j := range 4 {
 		email := fmt.Sprintf("%s-%d-%d@ory.sh", prefix, i, j)
 		traits.Emails = append(traits.Emails, email)
 		verifiableAddresses = append(verifiableAddresses, identity.VerifiableAddress{

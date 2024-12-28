@@ -6,11 +6,13 @@ package password
 import (
 	"context"
 	"encoding/json"
-
-	"github.com/ory/kratos/ui/node"
+	"strings"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/pkg/errors"
+
+	"github.com/ory/kratos/ui/node"
+	"github.com/ory/x/jsonnetsecure"
 
 	"github.com/ory/x/decoderx"
 
@@ -37,9 +39,10 @@ type registrationStrategyDependencies interface {
 	x.WriterProvider
 	x.CSRFTokenGeneratorProvider
 	x.CSRFProvider
-
+	x.HTTPClientProvider
+	x.TracingProvider
+	jsonnetsecure.VMProvider
 	config.Provider
-
 	continuity.ManagementProvider
 
 	errorx.ManagementProvider
@@ -65,6 +68,7 @@ type registrationStrategyDependencies interface {
 
 	identity.PrivilegedPoolProvider
 	identity.ValidationProvider
+	identity.ManagementProvider
 
 	session.HandlerProvider
 	session.ManagementProvider
@@ -84,7 +88,7 @@ func NewStrategy(d any) *Strategy {
 	}
 }
 
-func (s *Strategy) CountActiveFirstFactorCredentials(cc map[identity.CredentialsType]identity.Credentials) (count int, err error) {
+func (s *Strategy) CountActiveFirstFactorCredentials(ctx context.Context, cc map[identity.CredentialsType]identity.Credentials) (count int, err error) {
 	for _, c := range cc {
 		if c.Type == s.ID() && len(c.Config) > 0 {
 			var conf identity.CredentialsPassword
@@ -92,8 +96,9 @@ func (s *Strategy) CountActiveFirstFactorCredentials(cc map[identity.Credentials
 				return 0, errors.WithStack(err)
 			}
 
-			if len(c.Identifiers) > 0 && len(c.Identifiers[0]) > 0 &&
-				(hash.IsBcryptHash([]byte(conf.HashedPassword)) || hash.IsArgon2idHash([]byte(conf.HashedPassword))) {
+			if len(strings.Join(c.Identifiers, "")) > 0 &&
+				((s.d.Config().PasswordMigrationHook(ctx).Enabled && conf.UsePasswordMigrationHook) ||
+					len(conf.HashedPassword) > 0) {
 				count++
 			}
 		}
@@ -101,7 +106,7 @@ func (s *Strategy) CountActiveFirstFactorCredentials(cc map[identity.Credentials
 	return
 }
 
-func (s *Strategy) CountActiveMultiFactorCredentials(cc map[identity.CredentialsType]identity.Credentials) (count int, err error) {
+func (s *Strategy) CountActiveMultiFactorCredentials(_ context.Context, _ map[identity.CredentialsType]identity.Credentials) (count int, err error) {
 	return 0, nil
 }
 
@@ -109,7 +114,7 @@ func (s *Strategy) ID() identity.CredentialsType {
 	return identity.CredentialsTypePassword
 }
 
-func (s *Strategy) CompletedAuthenticationMethod(ctx context.Context, _ session.AuthenticationMethods) session.AuthenticationMethod {
+func (s *Strategy) CompletedAuthenticationMethod(_ context.Context) session.AuthenticationMethod {
 	return session.AuthenticationMethod{
 		Method: s.ID(),
 		AAL:    identity.AuthenticatorAssuranceLevel1,

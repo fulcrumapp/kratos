@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Session as KratosSession } from "@ory/kratos-client"
-import { OryKratosConfiguration } from "./config"
+import { OryKratosConfiguration } from "../../shared/config"
 import { ConfigBuilder } from "./configHelpers"
 
 export interface MailMessage {
@@ -114,6 +114,7 @@ declare global {
         expectedCount?: number
         email?: string
         subject?: string
+        body?: string
       }): Chainable<MailMessage>
 
       performEmailVerification(opts?: {

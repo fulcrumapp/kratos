@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/url"
 
+	"github.com/gofrs/uuid"
+
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/ory/kratos/x/events"
@@ -60,18 +62,20 @@ func (s *ErrorHandler) WriteFlowError(
 	group node.UiNodeGroup,
 	err error,
 ) {
-	s.d.Audit().
+	logger := s.d.Audit().
 		WithError(err).
 		WithRequest(r).
-		WithField("verification_flow", f).
+		WithField("verification_flow", f.ToLoggerField())
+
+	logger.
 		Info("Encountered self-service verification error.")
 
 	if f == nil {
-		trace.SpanFromContext(r.Context()).AddEvent(events.NewVerificationFailed(r.Context(), "", ""))
+		trace.SpanFromContext(r.Context()).AddEvent(events.NewVerificationFailed(r.Context(), uuid.Nil, "", "", err))
 		s.forward(w, r, nil, err)
 		return
 	}
-	trace.SpanFromContext(r.Context()).AddEvent(events.NewVerificationFailed(r.Context(), string(f.Type), f.Active.String()))
+	trace.SpanFromContext(r.Context()).AddEvent(events.NewVerificationFailed(r.Context(), f.ID, string(f.Type), f.Active.String(), err))
 
 	if e := new(flow.ExpiredError); errors.As(err, &e) {
 		strategy, err := s.d.VerificationStrategies(r.Context()).Strategy(f.Active.String())

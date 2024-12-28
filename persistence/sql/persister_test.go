@@ -29,6 +29,7 @@ import (
 	"github.com/ory/kratos/internal"
 	"github.com/ory/kratos/internal/testhelpers"
 	"github.com/ory/kratos/persistence/sql"
+	"github.com/ory/kratos/persistence/sql/batch"
 	sqltesthelpers "github.com/ory/kratos/persistence/sql/testhelpers"
 	"github.com/ory/kratos/schema"
 	errorx "github.com/ory/kratos/selfservice/errorx/test"
@@ -100,8 +101,12 @@ func createCleanDatabases(t testing.TB) map[string]*driver.RegistryDefault {
 	var l sync.Mutex
 	if !testing.Short() {
 		funcs := map[string]func(t testing.TB) string{
-			"postgres":  dockertest.RunTestPostgreSQL,
-			"mysql":     dockertest.RunTestMySQL,
+			"postgres": func(t testing.TB) string {
+				return dockertest.RunTestPostgreSQLWithVersion(t, "16")
+			},
+			"mysql": func(t testing.TB) string {
+				return dockertest.RunTestMySQLWithVersion(t, "8.0")
+			},
 			"cockroach": newLocalTestCRDBServer,
 		}
 
@@ -259,6 +264,10 @@ func TestPersister(t *testing.T) {
 			t.Run("contract=continuity.TestPersister", func(t *testing.T) {
 				t.Parallel()
 				continuity.TestPersister(ctx, p)(t)
+			})
+			t.Run("contract=batch.TestPersister", func(t *testing.T) {
+				t.Parallel()
+				batch.TestPersister(ctx, reg.Tracer(ctx), p)(t)
 			})
 		})
 	}

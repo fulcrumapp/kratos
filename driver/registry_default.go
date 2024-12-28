@@ -12,6 +12,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lestrrat-go/jwx/jwk"
+
+	"github.com/ory/kratos/selfservice/strategy/idfirst"
+
 	"github.com/cenkalti/backoff"
 	"github.com/dgraph-io/ristretto"
 	"github.com/gobuffalo/pop/v6"
@@ -249,8 +253,8 @@ func (m *RegistryDefault) HealthHandler(_ context.Context) *healthx.Handler {
 	if m.healthxHandler == nil {
 		m.healthxHandler = healthx.NewHandler(m.Writer(), config.Version,
 			healthx.ReadyCheckers{
-				"database": func(_ *http.Request) error {
-					return m.Ping()
+				"database": func(r *http.Request) error {
+					return m.PingContext(r.Context())
 				},
 				"migrations": func(r *http.Request) error {
 					if m.migrationStatus != nil && !m.migrationStatus.HasPending() {
@@ -324,6 +328,7 @@ func (m *RegistryDefault) selfServiceStrategies() []any {
 				passkey.NewStrategy(m),
 				webauthn.NewStrategy(m),
 				lookup.NewStrategy(m),
+				idfirst.NewStrategy(m),
 			}
 		}
 	}
@@ -379,6 +384,7 @@ nextStrategy:
 					continue nextStrategy
 				}
 			}
+
 			if m.strategyLoginEnabled(ctx, s.ID().String()) {
 				loginStrategies = append(loginStrategies, s)
 			}
@@ -475,11 +481,11 @@ func (m *RegistryDefault) Cipher(ctx context.Context) cipher.Cipher {
 	if m.crypter == nil {
 		switch m.c.CipherAlgorithm(ctx) {
 		case "xchacha20-poly1305":
-			m.crypter = cipher.NewCryptChaCha20(m)
+			m.crypter = cipher.NewCryptChaCha20(m.Config())
 		case "aes":
-			m.crypter = cipher.NewCryptAES(m)
+			m.crypter = cipher.NewCryptAES(m.Config())
 		default:
-			m.crypter = cipher.NewNoop(m)
+			m.crypter = cipher.NewNoop()
 			m.l.Logger.Warning("No encryption configuration found. The default algorithm (noop) will be used, resulting in sensitive data being stored in plaintext")
 		}
 	}
@@ -523,7 +529,7 @@ func (m *RegistryDefault) CookieManager(ctx context.Context) sessions.StoreExact
 	}
 
 	cs := sessions.NewCookieStore(keys...)
-	cs.Options.Secure = !m.Config().IsInsecureDevMode(ctx)
+	cs.Options.Secure = m.Config().SessionCookieSecure(ctx)
 	cs.Options.HttpOnly = true
 
 	if domain := m.Config().SessionDomain(ctx); domain != "" {
@@ -549,7 +555,7 @@ func (m *RegistryDefault) CookieManager(ctx context.Context) sessions.StoreExact
 func (m *RegistryDefault) ContinuityCookieManager(ctx context.Context) sessions.StoreExact {
 	// To support hot reloading, this can not be instantiated only once.
 	cs := sessions.NewCookieStore(m.Config().SecretsSession(ctx)...)
-	cs.Options.Secure = !m.Config().IsInsecureDevMode(ctx)
+	cs.Options.Secure = m.Config().CookieSecure(ctx)
 	cs.Options.HttpOnly = true
 	cs.Options.SameSite = http.SameSiteLaxMode
 	return cs
@@ -668,13 +674,18 @@ func (m *RegistryDefault) Init(ctx context.Context, ctxer contextx.Contextualize
 			m.Logger().WithError(err).Warnf("Unable to open database, retrying.")
 			return errors.WithStack(err)
 		}
-		p, err := sql.NewPersister(ctx, m, c, sql.WithExtraMigrations(o.extraMigrations...), sql.WithDisabledLogging(o.disableMigrationLogging))
+		p, err := sql.NewPersister(ctx, m, c,
+			sql.WithExtraMigrations(o.extraMigrations...),
+			sql.WithExtraGoMigrations(o.extraGoMigrations...),
+			sql.WithDisabledLogging(o.disableMigrationLogging))
 		if err != nil {
 			m.Logger().WithError(err).Warnf("Unable to initialize persister, retrying.")
 			return err
 		}
 
-		if err := p.Ping(); err != nil {
+		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		if err := c.Store.SQLDB().PingContext(ctx); err != nil {
 			m.Logger().WithError(err).Warnf("Unable to ping database, retrying.")
 			return err
 		}
@@ -793,12 +804,20 @@ func (m *RegistryDefault) LoginCodePersister() code.LoginCodePersister {
 	return m.Persister()
 }
 
+func (m *RegistryDefault) TransactionalPersisterProvider() x.TransactionalPersister {
+	return m.Persister()
+}
+
 func (m *RegistryDefault) Persister() persistence.Persister {
 	return m.persister
 }
 
+func (m *RegistryDefault) PingContext(ctx context.Context) error {
+	return m.persister.Ping(ctx)
+}
+
 func (m *RegistryDefault) Ping() error {
-	return m.persister.Ping()
+	return m.persister.Ping(context.Background())
 }
 
 func (m *RegistryDefault) WithCSRFTokenGenerator(cg x.CSRFToken) {
@@ -863,13 +882,13 @@ func (m *RegistryDefault) Contextualizer() contextx.Contextualizer {
 func (m *RegistryDefault) JWKSFetcher() *jwksx.FetcherNext {
 	if m.jwkFetcher == nil {
 		maxItems := int64(10000000)
-		cache, _ := ristretto.NewCache(&ristretto.Config{
+		cache, _ := ristretto.NewCache(&ristretto.Config[[]byte, jwk.Set]{
 			NumCounters:        maxItems * 10,
 			MaxCost:            maxItems,
 			BufferItems:        64,
 			Metrics:            true,
 			IgnoreInternalCost: true,
-			Cost: func(value interface{}) int64 {
+			Cost: func(value jwk.Set) int64 {
 				return 1
 			},
 		})

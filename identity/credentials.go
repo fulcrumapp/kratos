@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gofrs/uuid"
+	"github.com/wI2L/jsondiff"
 
 	"github.com/ory/kratos/ui/node"
 	"github.com/ory/x/sqlxx"
@@ -88,6 +89,7 @@ const (
 	CredentialsTypeCodeAuth CredentialsType = "code"
 	CredentialsTypePasskey  CredentialsType = "passkey"
 	CredentialsTypeProfile  CredentialsType = "profile"
+	CredentialsTypeSAML     CredentialsType = "saml"
 )
 
 func (c CredentialsType) String() string {
@@ -98,7 +100,7 @@ func (c CredentialsType) ToUiNodeGroup() node.UiNodeGroup {
 	switch c {
 	case CredentialsTypePassword:
 		return node.PasswordGroup
-	case CredentialsTypeOIDC:
+	case CredentialsTypeOIDC, CredentialsTypeSAML:
 		return node.OpenIDConnectGroup
 	case CredentialsTypeTOTP:
 		return node.TOTPGroup
@@ -137,6 +139,7 @@ func ParseCredentialsType(in string) (CredentialsType, bool) {
 	for _, t := range []CredentialsType{
 		CredentialsTypePassword,
 		CredentialsTypeOIDC,
+		CredentialsTypeSAML,
 		CredentialsTypeTOTP,
 		CredentialsTypeLookup,
 		CredentialsTypeWebAuthn,
@@ -215,8 +218,8 @@ type (
 	// swagger:ignore
 	ActiveCredentialsCounter interface {
 		ID() CredentialsType
-		CountActiveFirstFactorCredentials(cc map[CredentialsType]Credentials) (int, error)
-		CountActiveMultiFactorCredentials(cc map[CredentialsType]Credentials) (int, error)
+		CountActiveFirstFactorCredentials(context.Context, map[CredentialsType]Credentials) (int, error)
+		CountActiveMultiFactorCredentials(context.Context, map[CredentialsType]Credentials) (int, error)
 	}
 
 	// swagger:ignore
@@ -248,7 +251,13 @@ func CredentialsEqual(a, b map[CredentialsType]Credentials) bool {
 			return false
 		}
 
-		if string(expect.Config) != string(actual.Config) {
+		// Try to normalize configs (remove spaces etc).
+		patch, err := jsondiff.CompareJSON(actual.Config, expect.Config)
+		if err != nil {
+			return false
+		}
+
+		if len(patch) > 0 {
 			return false
 		}
 
