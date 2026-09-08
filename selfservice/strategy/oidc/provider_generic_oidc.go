@@ -217,3 +217,14 @@ func (g *ProviderGenericOIDC) verifiedIDToken(ctx context.Context, exchange *oau
 
 	return token, nil
 }
+
+var _ NonceValidationSkipper = new(ProviderGenericOIDC)
+
+func (a *ProviderGenericOIDC) CanSkipNonce(c *Claims) bool {
+	if a.config.RequireNonce {
+		return false
+	}
+
+	// Not all SDKs support nonce validation, so we skip it if no nonce is present in the claims of the ID Token.
+	return c.Nonce == ""
+}

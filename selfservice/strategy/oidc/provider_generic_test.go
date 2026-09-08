@@ -92,3 +92,23 @@ func TestProviderGenericOIDC_AddAuthCodeURLOptions(t *testing.T) {
 		assert.Contains(t, makeAuthCodeURL(t, r, reg), "claims="+url.QueryEscape(string(makeOIDCClaims())))
 	})
 }
+
+func TestProviderGenericOIDCCanSkipNonce(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		requireNonce bool
+		claimNonce   string
+		wantSkip     bool
+	}{
+		{name: "skips missing nonce by default", wantSkip: true},
+		{name: "does not skip present nonce", claimNonce: "nonce", wantSkip: false},
+		{name: "requires missing nonce when configured", requireNonce: true, wantSkip: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			provider := oidc.NewProviderGenericOIDC(&oidc.Configuration{RequireNonce: tc.requireNonce}, nil)
+			nonceSkipper, ok := provider.(oidc.NonceValidationSkipper)
+			require.True(t, ok)
+			assert.Equal(t, tc.wantSkip, nonceSkipper.CanSkipNonce(&oidc.Claims{Nonce: tc.claimNonce}))
+		})
+	}
+}

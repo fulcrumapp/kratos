@@ -1181,6 +1181,7 @@ func TestStrategy(t *testing.T) {
 				ClientSecret: invalid.ClientSecret,
 				IssuerURL:    hydraPublic + "/",
 				Mapper:       "file://./stub/oidc.facebook.jsonnet",
+				RequireNonce: true,
 			})
 		oidc.RegisterTestProvider(t, "test-provider")
 
